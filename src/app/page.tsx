@@ -1,65 +1,38 @@
-import Image from "next/image";
+import Link from "next/link";
+import { Sparkles, Swords, Hammer } from "lucide-react";
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <main className="flex min-h-screen flex-col items-center justify-center bg-[radial-gradient(ellipse_at_center,_#1a0b2e_0%,_#0a0418_70%)] text-white">
+      <div className="flex items-center gap-3">
+        <Sparkles className="h-12 w-12 text-fuchsia-400" />
+        <h1 className="text-6xl font-black tracking-tight">
+          Rift<span className="text-fuchsia-400">Arena</span>
+        </h1>
+      </div>
+      <p className="mt-3 max-w-md text-center text-sm opacity-70">
+        A digital arena to play Riftbound. Build decks, command champions,
+        clash across the rift.
+      </p>
+
+      <div className="mt-12 flex gap-4">
+        <Link
+          href="/play"
+          className="flex items-center gap-2 rounded bg-fuchsia-700 px-8 py-4 text-lg font-bold shadow-lg shadow-fuchsia-900/50 hover:bg-fuchsia-600"
+        >
+          <Swords className="h-5 w-5" /> Play vs AI
+        </Link>
+        <Link
+          href="/deck-builder"
+          className="flex items-center gap-2 rounded border-2 border-fuchsia-700 px-8 py-4 text-lg font-bold hover:bg-fuchsia-900/30"
+        >
+          <Hammer className="h-5 w-5" /> Deck Builder
+        </Link>
+      </div>
+
+      <p className="mt-16 text-xs opacity-40">
+        MVP — placeholder cards. Drop in real Riftbound rules and we adapt.
+      </p>
+    </main>
   );
 }

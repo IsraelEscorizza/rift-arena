@@ -1,36 +1,59 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RiftArena
 
-## Getting Started
+A digital arena to play Riftbound — build decks, command champions, clash across the rift.
 
-First, run the development server:
+Inspired by MTG Arena. Built with Next.js 15, TypeScript, Tailwind, Zustand, and Framer Motion.
+
+## Status: MVP
+
+This is an early MVP with **placeholder cards** and a generic TCG engine. The real Riftbound rules and card database have not been wired in yet — once you provide them, the engine adapts to those rules.
+
+### What works
+
+- Game engine: turns, phases (untap/draw/main/combat/end), resources, casting, combat
+- Card types: units, spells, resources, champions
+- Keywords: haste, taunt, lifesteal (partial), flying (data only)
+- Effects: damage, heal, draw, destroy
+- Targeting: pick units or players for spells
+- Deck builder: search, filter, save to localStorage
+- Local play vs AI
+- 2 starter decks
+
+### Not yet
+
+- Stack/priority system (instants on opponent turn)
+- Triggered/activated abilities
+- Real Riftbound rules and cards
+- Multiplayer (WebSocket)
+- Account system / cloud deck storage
+
+## Run
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Project structure
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+src/
+├── app/
+│   ├── page.tsx              # Home menu
+│   ├── play/page.tsx         # Game vs AI
+│   └── deck-builder/page.tsx # Deck builder
+├── components/game/          # Card, GameBoard
+├── lib/
+│   ├── game/                 # types, engine, ai, phases
+│   ├── cards/database.ts     # placeholder cards
+│   └── decks/storage.ts      # localStorage decks
+└── store/gameStore.ts        # Zustand state
+```
 
-## Learn More
+## Replacing placeholders with Riftbound
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Update `src/lib/game/types.ts` if Riftbound has different card types/keywords/phases.
+2. Replace `src/lib/cards/database.ts` with the real card list.
+3. Adjust `src/lib/game/engine.ts` to match Riftbound's turn structure and rules.
