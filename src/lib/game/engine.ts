@@ -572,26 +572,65 @@ export function standardMove(
   unitUid: string,
   destBfUid: string | null,
 ): GameState {
-  if (!canStandardMove(state, unitUid, destBfUid)) return state;
-  const card = findCard(state, unitUid);
-  if (!card) return state;
-  const def = CARDS_BY_ID[card.defId];
-  const player = getPlayer(state, card.controllerId);
-  card.exhausted = true;
-  card.battlefieldId = destBfUid ?? undefined;
-  if (destBfUid) {
-    log(
-      state,
-      `${player.name} moves ${def.name} to ${state.battlefieldDefs[
-        state.battlefields.find((b) => b.uid === destBfUid)!.defId
-      ].name}.`,
-    );
-  } else {
-    log(state, `${player.name} moves ${def.name} back to base.`);
+  return standardMoveMultiple(state, [unitUid], destBfUid);
+}
+
+/**
+ * Move multiple units to the same destination in one atomic action.
+ * Per Riftbound rules (rule 144): "Multiple units can declare Standard Move
+ * simultaneously to same destination; origins can differ; costs paid simultaneously."
+ *
+ * All units are exhausted and placed at destination, THEN contested check runs
+ * and combat resolves once at the end (instead of one-at-a-time).
+ */
+export function standardMoveMultiple(
+  state: GameState,
+  unitUids: string[],
+  destBfUid: string | null,
+): GameState {
+  // Validate all of them first; if any invalid, abort the whole batch.
+  const movers: { card: CardInstance; def: CardDefinition }[] = [];
+  for (const uid of unitUids) {
+    if (!canStandardMove(state, uid, destBfUid)) return state;
+    const card = findCard(state, uid);
+    if (!card) return state;
+    movers.push({ card, def: CARDS_BY_ID[card.defId] });
   }
-  // Check contested
+  if (movers.length === 0) return state;
+
+  const playerName = getPlayer(state, movers[0].card.controllerId).name;
+
+  // Apply all moves simultaneously
+  for (const m of movers) {
+    m.card.exhausted = true;
+    m.card.battlefieldId = destBfUid ?? undefined;
+  }
+
+  if (destBfUid) {
+    const bfDef =
+      state.battlefieldDefs[
+        state.battlefields.find((b) => b.uid === destBfUid)!.defId
+      ];
+    if (movers.length === 1) {
+      log(state, `${playerName} moves ${movers[0].def.name} to ${bfDef.name}.`);
+    } else {
+      log(
+        state,
+        `${playerName} moves ${movers.length} units to ${bfDef.name} (${movers
+          .map((m) => m.def.name)
+          .join(", ")}).`,
+      );
+    }
+  } else {
+    if (movers.length === 1) {
+      log(state, `${playerName} moves ${movers[0].def.name} back to base.`);
+    } else {
+      log(state, `${playerName} returns ${movers.length} units to base.`);
+    }
+  }
+
+  // Check contested + combat ONCE for the whole batch
   checkContested(state);
-  // Auto-resolve combat at end of move (MVP simplification)
   resolveAllPendingCombat(state);
   return state;
 }

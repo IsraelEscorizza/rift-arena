@@ -8,6 +8,7 @@ import {
   playCard,
   recycleRuneForPower,
   standardMove,
+  standardMoveMultiple,
   tapRuneForEnergy,
   untapRune,
 } from "@/lib/game/engine";
@@ -27,6 +28,7 @@ interface GameStore {
   untapRune: (uid: string) => void;
   recycleRune: (uid: string) => void;
   standardMove: (unitUid: string, destBfUid: string | null) => void;
+  standardMoveMultiple: (unitUids: string[], destBfUid: string | null) => void;
   reset: () => void;
 }
 
@@ -68,6 +70,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const cur = get().state;
     if (!cur) return;
     set({ state: standardMove(clone(cur), unitUid, destBfUid) });
+  },
+  standardMoveMultiple: (unitUids, destBfUid) => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: standardMoveMultiple(clone(cur), unitUids, destBfUid) });
   },
   reset: () => set({ state: null }),
 }));

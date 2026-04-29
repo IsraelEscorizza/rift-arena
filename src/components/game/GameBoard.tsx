@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   CardInstance,
@@ -9,20 +10,23 @@ import {
   RuneInstance,
 } from "@/lib/game/types";
 import { CARDS_BY_ID, getDomainHex } from "@/lib/cards/database";
-import { canPlayCard, canStandardMove, canUntapRune } from "@/lib/game/engine";
+import {
+  canPlayCard,
+  canStandardMove,
+  canUntapRune,
+} from "@/lib/game/engine";
 import { useGameStore } from "@/store/gameStore";
-import { GameCard, CardTooltip } from "./Card";
+import { GameCard } from "./Card";
+import { DomainIcon, EnergyIcon } from "./DomainIcon";
 import { cn } from "@/lib/utils";
 import {
   ArrowRight,
   BookOpen,
   Crown,
-  Droplet,
   Layers,
   Shield as ShieldIcon,
   Trash2,
   Trophy,
-  Zap,
 } from "lucide-react";
 
 const PHASE_LABEL: Record<string, string> = {
@@ -41,9 +45,10 @@ export function GameBoard() {
   const tapRune = useGameStore((s) => s.tapRune);
   const untapRune = useGameStore((s) => s.untapRune);
   const recycleRune = useGameStore((s) => s.recycleRune);
-  const move = useGameStore((s) => s.standardMove);
+  const moveMany = useGameStore((s) => s.standardMoveMultiple);
 
-  const [selectedUnitUid, setSelectedUnitUid] = useState<string | null>(null);
+  // Set of unit UIDs the player has selected for batch movement
+  const [selected, setSelected] = useState<string[]>([]);
 
   if (!state) return null;
 
@@ -51,35 +56,34 @@ export function GameBoard() {
   const ai = state.players[1];
   const activeIsHuman = state.turnPlayerId === human.id;
 
+  function toggleSelect(uid: string) {
+    setSelected((cur) =>
+      cur.includes(uid) ? cur.filter((x) => x !== uid) : [...cur, uid],
+    );
+  }
+  function clearSelection() {
+    setSelected([]);
+  }
+
   function handlePlayFromHand(uid: string) {
     if (canPlayCard(state!, uid)) playCard(uid);
   }
 
   function handleUnitClick(unit: CardInstance) {
     if (unit.controllerId !== human.id) return;
-    if (selectedUnitUid === unit.uid) {
-      setSelectedUnitUid(null);
-    } else {
-      setSelectedUnitUid(unit.uid);
-    }
+    if (unit.exhausted) return;
+    toggleSelect(unit.uid);
   }
 
-  function handleBattlefieldClick(bfUid: string) {
-    if (selectedUnitUid) {
-      if (canStandardMove(state!, selectedUnitUid, bfUid)) {
-        move(selectedUnitUid, bfUid);
-        setSelectedUnitUid(null);
-      }
-    }
-  }
-
-  function handleBaseClick() {
-    if (selectedUnitUid) {
-      if (canStandardMove(state!, selectedUnitUid, null)) {
-        move(selectedUnitUid, null);
-        setSelectedUnitUid(null);
-      }
-    }
+  function moveSelectionTo(destBfUid: string | null) {
+    if (selected.length === 0) return;
+    // Filter to legal movers only
+    const legal = selected.filter((uid) =>
+      canStandardMove(state!, uid, destBfUid),
+    );
+    if (legal.length === 0) return;
+    moveMany(legal, destBfUid);
+    clearSelection();
   }
 
   return (
@@ -107,7 +111,12 @@ export function GameBoard() {
       </header>
 
       {/* Opponent panel */}
-      <PlayerStrip player={ai} active={!activeIsHuman} faceDown />
+      <PlayerStrip
+        player={ai}
+        active={!activeIsHuman}
+        faceDown
+        selectedUnitUids={[]}
+      />
 
       {/* Battlefields */}
       <main className="flex flex-1 flex-col items-center justify-center gap-4 p-3">
@@ -117,8 +126,8 @@ export function GameBoard() {
               key={bf.uid}
               state={state}
               bfUid={bf.uid}
-              selectedUnitUid={selectedUnitUid}
-              onBattlefieldClick={() => handleBattlefieldClick(bf.uid)}
+              selectedUnitUids={selected}
+              onBattlefieldClick={() => moveSelectionTo(bf.uid)}
               onUnitClick={handleUnitClick}
             />
           ))}
@@ -129,13 +138,12 @@ export function GameBoard() {
       <PlayerStrip
         player={human}
         active={activeIsHuman}
-        selectedUnitUid={selectedUnitUid}
+        selectedUnitUids={selected}
         onUnitClick={handleUnitClick}
-        onBaseClick={handleBaseClick}
+        onBaseClick={() => moveSelectionTo(null)}
         canMoveToBase={
-          selectedUnitUid
-            ? canStandardMove(state, selectedUnitUid, null)
-            : false
+          selected.length > 0 &&
+          selected.some((uid) => canStandardMove(state, uid, null))
         }
         onTapRune={tapRune}
         onUntapRune={untapRune}
@@ -190,14 +198,12 @@ export function GameBoard() {
         ))}
       </div>
 
-      {/* Move hint */}
-      {selectedUnitUid && (
+      {/* Selection hint */}
+      {selected.length > 0 && (
         <div className="absolute left-1/2 top-12 -translate-x-1/2 rounded bg-yellow-600 px-3 py-1 text-xs font-bold shadow-lg">
-          Click a battlefield to move there, or your base to return.
-          <button
-            onClick={() => setSelectedUnitUid(null)}
-            className="ml-2 underline"
-          >
+          {selected.length} unit{selected.length > 1 ? "s" : ""} selected — click a
+          battlefield or your base to move them all.
+          <button onClick={clearSelection} className="ml-2 underline">
             cancel
           </button>
         </div>
@@ -236,7 +242,7 @@ function PlayerStrip({
   player,
   active,
   faceDown,
-  selectedUnitUid,
+  selectedUnitUids,
   onUnitClick,
   onBaseClick,
   canMoveToBase,
@@ -248,7 +254,7 @@ function PlayerStrip({
   player: PlayerState;
   active: boolean;
   faceDown?: boolean;
-  selectedUnitUid?: string | null;
+  selectedUnitUids: string[];
   onUnitClick?: (u: CardInstance) => void;
   onBaseClick?: () => void;
   canMoveToBase?: boolean;
@@ -277,26 +283,27 @@ function PlayerStrip({
         </div>
         {!faceDown && (
           <>
-            <div className="mt-0.5 flex items-center gap-1 text-cyan-300">
-              <Zap className="h-3 w-3" /> {player.pool.energy} energy
+            <div className="mt-1 flex items-center gap-1 text-cyan-200">
+              <EnergyIcon size={14} />
+              <span className="font-bold">{player.pool.energy}</span> energy
             </div>
-            <div className="flex flex-wrap gap-0.5 text-[10px]">
+            <div className="mt-1 flex flex-wrap gap-1">
               {Object.entries(player.pool.power).map(
                 ([d, n]) =>
                   n > 0 && (
                     <span
                       key={d}
-                      style={{ background: getDomainHex(d as any) }}
-                      className="rounded px-1 font-bold"
+                      className="flex items-center gap-0.5 rounded bg-black/60 px-1 text-[10px]"
                     >
-                      {d[0]}:{n}
+                      <DomainIcon domain={d as any} size={12} />
+                      <span className="font-bold">{n}</span>
                     </span>
                   ),
               )}
             </div>
           </>
         )}
-        <div className="mt-0.5 flex items-center gap-2 text-[10px] opacity-70">
+        <div className="mt-1 flex items-center gap-2 text-[10px] opacity-70">
           <span title="Hand">
             <Layers className="inline h-3 w-3" /> {player.hand.length}
           </span>
@@ -308,7 +315,7 @@ function PlayerStrip({
         </div>
       </div>
 
-      {/* Base units (units at home) */}
+      {/* Base units */}
       <div className="flex-1 border-l border-fuchsia-900/30 pl-3">
         <div className="text-[10px] uppercase tracking-wide opacity-50">
           Base — units
@@ -328,7 +335,7 @@ function PlayerStrip({
               <GameCard
                 card={u}
                 size="sm"
-                selected={selectedUnitUid === u.uid}
+                selected={selectedUnitUids.includes(u.uid)}
               />
             </div>
           ))}
@@ -341,27 +348,34 @@ function PlayerStrip({
           <div className="text-[10px] uppercase tracking-wide opacity-50">
             Runes ({player.base.runes.length})
           </div>
-          <div className="mt-1 flex flex-wrap gap-1">
-            {player.base.runes.map((r) => {
-              const refundable = canUntap?.(r.uid) ?? false;
-              return (
-                <RuneChip
-                  key={r.uid}
-                  rune={r}
-                  onTap={() => onTapRune?.(r.uid)}
-                  onUntap={() => onUntapRune?.(r.uid)}
-                  onRecycle={() => onRecycleRune?.(r.uid)}
-                  disabled={!active}
-                  refundable={refundable}
-                />
-              );
-            })}
+          <div className="mt-1 flex flex-wrap gap-2">
+            <AnimatePresence>
+              {player.base.runes.map((r) => {
+                const refundable = canUntap?.(r.uid) ?? false;
+                return (
+                  <RuneChip
+                    key={r.uid}
+                    rune={r}
+                    onTap={() => onTapRune?.(r.uid)}
+                    onUntap={() => onUntapRune?.(r.uid)}
+                    onRecycle={() => onRecycleRune?.(r.uid)}
+                    disabled={!active}
+                    refundable={refundable}
+                  />
+                );
+              })}
+            </AnimatePresence>
           </div>
         </div>
       )}
       {faceDown && (
-        <div className="w-72 shrink-0 border-l border-fuchsia-900/30 pl-3 text-[10px] opacity-50">
-          {player.base.runes.length} runes channeled
+        <div className="flex w-72 shrink-0 items-center gap-1 border-l border-fuchsia-900/30 pl-3">
+          {player.base.runes.map((r) => (
+            <DomainIcon key={r.uid} domain={r.domain} size={18} />
+          ))}
+          {player.base.runes.length === 0 && (
+            <span className="text-[10px] opacity-50">no runes</span>
+          )}
         </div>
       )}
     </div>
@@ -383,8 +397,8 @@ function RuneChip({
   disabled: boolean;
   refundable: boolean;
 }) {
-  const color = getDomainHex(rune.domain);
-  // Click toggles tap state. Tapping when ready, untapping when exhausted-and-refundable.
+  const def = CARDS_BY_ID[rune.defId];
+  // Click toggles tap state
   const handleMainClick = () => {
     if (rune.exhausted) {
       if (refundable) onUntap();
@@ -392,53 +406,92 @@ function RuneChip({
       onTap();
     }
   };
-  const mainDisabled =
-    disabled || (rune.exhausted && !refundable);
+  const mainDisabled = disabled || (rune.exhausted && !refundable);
   const tooltip = rune.exhausted
     ? refundable
-      ? "Click to untap (refund [1] energy)"
-      : "Tapped — energy already spent, cannot refund"
-    : "Click to tap for [1] energy";
+      ? "Click to untap (refund 1 energy)"
+      : "Tapped — energy already spent"
+    : "Click to tap for 1 energy";
 
   return (
-    <div className="relative" onClick={(e) => e.stopPropagation()}>
-      <button
+    <motion.div
+      layout
+      initial={{ scale: 0, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      exit={{
+        x: -40,
+        opacity: 0,
+        rotate: -15,
+        transition: { duration: 0.4 },
+      }}
+      transition={{ type: "spring", stiffness: 280, damping: 22 }}
+      className="relative"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <motion.button
         onClick={handleMainClick}
         disabled={mainDisabled}
         title={tooltip}
-        style={{ background: color }}
+        animate={{
+          rotate: rune.exhausted ? 90 : 0,
+          opacity: mainDisabled ? 0.4 : rune.exhausted ? 0.7 : 1,
+          boxShadow: rune.exhausted
+            ? "0 0 0 0px rgba(0,0,0,0)"
+            : `0 0 12px 2px ${getDomainHex(rune.domain)}aa`,
+        }}
+        whileTap={{ scale: 0.9 }}
+        transition={{ type: "spring", stiffness: 220, damping: 18 }}
         className={cn(
-          "flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold text-black shadow transition",
-          rune.exhausted && !refundable && "opacity-40",
-          rune.exhausted && refundable &&
-            "opacity-60 ring-2 ring-yellow-300 hover:opacity-100",
+          "relative h-12 w-12 overflow-hidden rounded-md border-2 border-black/40",
+          refundable && rune.exhausted && "ring-2 ring-yellow-300",
           mainDisabled && "cursor-not-allowed",
         )}
+        style={{ background: getDomainHex(rune.domain) }}
       >
-        {rune.domain[0]}
-      </button>
-      <button
+        {def?.imageUrl ? (
+          <Image
+            src={def.imageUrl}
+            alt={def.name}
+            width={48}
+            height={48}
+            unoptimized
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <DomainIcon domain={rune.domain} size={28} />
+        )}
+        {/* Domain corner badge */}
+        <span className="absolute right-0 top-0">
+          <DomainIcon domain={rune.domain} size={14} />
+        </span>
+      </motion.button>
+
+      {/* Recycle button */}
+      <motion.button
         onClick={onRecycle}
         disabled={disabled}
-        title="Recycle for [1] power of this domain (sends rune back to deck)"
-        className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-fuchsia-700 text-[8px] font-bold hover:bg-fuchsia-500 disabled:opacity-30"
+        whileHover={{ scale: 1.15 }}
+        whileTap={{ scale: 0.85, rotate: 360 }}
+        transition={{ duration: 0.4 }}
+        title="Recycle for 1 power of this domain (sends rune to deck)"
+        className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-fuchsia-700 text-[9px] font-bold ring-1 ring-black hover:bg-fuchsia-500 disabled:opacity-30"
       >
         ↻
-      </button>
-    </div>
+      </motion.button>
+    </motion.div>
   );
 }
 
 function BattlefieldView({
   state,
   bfUid,
-  selectedUnitUid,
+  selectedUnitUids,
   onBattlefieldClick,
   onUnitClick,
 }: {
   state: GameState;
   bfUid: string;
-  selectedUnitUid: string | null;
+  selectedUnitUids: string[];
   onBattlefieldClick: () => void;
   onUnitClick: (u: CardInstance) => void;
 }) {
@@ -460,14 +513,14 @@ function BattlefieldView({
         : "Uncontrolled";
 
   const canMoveHere =
-    selectedUnitUid !== null &&
-    canStandardMove(state, selectedUnitUid, bfUid);
+    selectedUnitUids.length > 0 &&
+    selectedUnitUids.some((uid) => canStandardMove(state, uid, bfUid));
 
   return (
     <button
       onClick={onBattlefieldClick}
       className={cn(
-        "group flex w-72 flex-col rounded-xl border-2 bg-black/50 p-2 text-left",
+        "group relative flex w-72 flex-col rounded-xl border-2 bg-black/60 p-2 text-left overflow-hidden",
         bf.contested
           ? "border-red-500"
           : bf.controllerId === "p1"
@@ -478,8 +531,22 @@ function BattlefieldView({
         canMoveHere && "ring-4 ring-yellow-400",
       )}
     >
-      <div className="mb-1 flex items-center justify-between text-xs">
-        <span className="font-bold">{def?.name}</span>
+      {/* Background image of the battlefield */}
+      {def?.imageUrl && (
+        <div className="pointer-events-none absolute inset-0 opacity-30 brightness-90">
+          <Image
+            src={def.imageUrl}
+            alt=""
+            fill
+            unoptimized
+            className="object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/70" />
+        </div>
+      )}
+
+      <div className="relative mb-1 flex items-center justify-between text-xs">
+        <span className="font-bold drop-shadow">{def?.name}</span>
         <span
           className={cn(
             "rounded px-1.5 text-[10px] font-bold",
@@ -495,8 +562,8 @@ function BattlefieldView({
       </div>
 
       {/* AI side */}
-      <div className="min-h-[5rem] rounded bg-rose-950/30 p-1.5">
-        <div className="text-[9px] uppercase opacity-50">AI units here</div>
+      <div className="relative min-h-[5rem] rounded bg-rose-950/50 p-1.5 backdrop-blur-sm">
+        <div className="text-[9px] uppercase opacity-70">AI units here</div>
         <div className="mt-0.5 flex flex-wrap gap-1">
           {aiUnits.map((u) => (
             <div key={u.uid}>
@@ -504,19 +571,18 @@ function BattlefieldView({
             </div>
           ))}
           {aiUnits.length === 0 && (
-            <span className="text-[10px] opacity-30">—</span>
+            <span className="text-[10px] opacity-40">—</span>
           )}
         </div>
       </div>
 
-      {/* Divider */}
-      <div className="my-1 flex items-center justify-center">
+      <div className="relative my-1 flex items-center justify-center">
         <ShieldIcon className="h-3 w-3 opacity-40" />
       </div>
 
       {/* Human side */}
-      <div className="min-h-[5rem] rounded bg-emerald-950/30 p-1.5">
-        <div className="text-[9px] uppercase opacity-50">Your units here</div>
+      <div className="relative min-h-[5rem] rounded bg-emerald-950/50 p-1.5 backdrop-blur-sm">
+        <div className="text-[9px] uppercase opacity-70">Your units here</div>
         <div className="mt-0.5 flex flex-wrap gap-1">
           {humanUnits.map((u) => (
             <div
@@ -529,12 +595,12 @@ function BattlefieldView({
               <GameCard
                 card={u}
                 size="sm"
-                selected={selectedUnitUid === u.uid}
+                selected={selectedUnitUids.includes(u.uid)}
               />
             </div>
           ))}
           {humanUnits.length === 0 && (
-            <span className="text-[10px] opacity-30">—</span>
+            <span className="text-[10px] opacity-40">—</span>
           )}
         </div>
       </div>
