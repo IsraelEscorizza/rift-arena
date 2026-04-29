@@ -1,205 +1,77 @@
-import { CardDefinition } from "@/lib/game/types";
+import type { CardDefinition, Domain } from "@/lib/game/types";
+import { ALL_CARDS, CARDS_BY_ID } from "./generated";
 
-export const CARD_DATABASE: Record<string, CardDefinition> = {
-  rift_crystal: {
-    id: "rift_crystal",
-    name: "Rift Crystal",
-    type: "resource",
-    faction: "neutral",
-    rarity: "common",
-    cost: 0,
-    text: "Tap: Add 1 resource.",
-  },
-  ember_imp: {
-    id: "ember_imp",
-    name: "Ember Imp",
-    type: "unit",
-    faction: "ember",
-    rarity: "common",
-    cost: 1,
-    attack: 2,
-    health: 1,
-    text: "A small but vicious flame sprite.",
-  },
-  void_stalker: {
-    id: "void_stalker",
-    name: "Void Stalker",
-    type: "unit",
-    faction: "void",
-    rarity: "common",
-    cost: 2,
-    attack: 2,
-    health: 2,
-    text: "Stalks from the rift between worlds.",
-  },
-  verdant_guardian: {
-    id: "verdant_guardian",
-    name: "Verdant Guardian",
-    type: "unit",
-    faction: "verdant",
-    rarity: "uncommon",
-    cost: 3,
-    attack: 2,
-    health: 5,
-    text: "Taunt — enemies must attack this unit first.",
-    keywords: ["taunt"],
-  },
-  tide_archer: {
-    id: "tide_archer",
-    name: "Tide Archer",
-    type: "unit",
-    faction: "tide",
-    rarity: "common",
-    cost: 2,
-    attack: 3,
-    health: 1,
-    text: "Swift coastal raider.",
-  },
-  ember_blast: {
-    id: "ember_blast",
-    name: "Ember Blast",
-    type: "spell",
-    faction: "ember",
-    rarity: "common",
-    cost: 1,
-    text: "Deal 3 damage to any target.",
-    effects: [{ kind: "damage", amount: 3, target: "any" }],
-  },
-  verdant_growth: {
-    id: "verdant_growth",
-    name: "Verdant Growth",
-    type: "spell",
-    faction: "verdant",
-    rarity: "common",
-    cost: 1,
-    text: "Heal 4 life.",
-    effects: [{ kind: "heal", amount: 4, target: "self" }],
-  },
-  rift_insight: {
-    id: "rift_insight",
-    name: "Rift Insight",
-    type: "spell",
-    faction: "neutral",
-    rarity: "common",
-    cost: 2,
-    text: "Draw 2 cards.",
-    effects: [{ kind: "draw", amount: 2, target: "self" }],
-  },
-  void_rend: {
-    id: "void_rend",
-    name: "Void Rend",
-    type: "spell",
-    faction: "void",
-    rarity: "uncommon",
-    cost: 3,
-    text: "Destroy target unit.",
-    effects: [{ kind: "destroy", target: "unit" }],
-  },
-  ember_dragon: {
-    id: "ember_dragon",
-    name: "Ember Dragon",
-    type: "unit",
-    faction: "ember",
-    rarity: "rare",
-    cost: 6,
-    attack: 6,
-    health: 6,
-    text: "Flying. A skybound terror of fire.",
-    keywords: ["flying"],
-  },
-  void_lord: {
-    id: "void_lord",
-    name: "Void Lord",
-    type: "champion",
-    faction: "void",
-    rarity: "legendary",
-    cost: 7,
-    attack: 7,
-    health: 7,
-    text: "Champion of the Rift.",
-  },
-  verdant_sapling: {
-    id: "verdant_sapling",
-    name: "Verdant Sapling",
-    type: "unit",
-    faction: "verdant",
-    rarity: "common",
-    cost: 1,
-    attack: 1,
-    health: 2,
-    text: "A young guardian of the wilds.",
-  },
-  tide_leviathan: {
-    id: "tide_leviathan",
-    name: "Tide Leviathan",
-    type: "unit",
-    faction: "tide",
-    rarity: "rare",
-    cost: 5,
-    attack: 5,
-    health: 5,
-    text: "Lifesteal — damage dealt heals you.",
-    keywords: ["lifesteal"],
-  },
-  swift_strike: {
-    id: "swift_strike",
-    name: "Swift Strike",
-    type: "spell",
-    faction: "ember",
-    rarity: "common",
-    cost: 2,
-    text: "Deal 2 damage to any target. Draw a card.",
-    effects: [
-      { kind: "damage", amount: 2, target: "any" },
-      { kind: "draw", amount: 1, target: "self" },
-    ],
-  },
-  rift_walker: {
-    id: "rift_walker",
-    name: "Rift Walker",
-    type: "unit",
-    faction: "neutral",
-    rarity: "uncommon",
-    cost: 4,
-    attack: 4,
-    health: 3,
-    text: "Haste — can attack the turn it enters play.",
-    keywords: ["haste"],
-  },
-};
+export { ALL_CARDS, CARDS_BY_ID };
 
-export const ALL_CARDS = Object.values(CARD_DATABASE);
-
-export function getCard(defId: string) {
-  const card = CARD_DATABASE[defId];
-  if (!card) throw new Error(`Card not found: ${defId}`);
-  return card;
+export function getCard(id: string): CardDefinition {
+  const c = CARDS_BY_ID[id];
+  if (!c) throw new Error(`Card not found: ${id}`);
+  return c;
 }
 
-export const STARTER_DECK_EMBER: { defId: string; quantity: number }[] = [
-  { defId: "rift_crystal", quantity: 8 },
-  { defId: "ember_imp", quantity: 3 },
-  { defId: "tide_archer", quantity: 2 },
-  { defId: "ember_blast", quantity: 3 },
-  { defId: "swift_strike", quantity: 3 },
-  { defId: "void_stalker", quantity: 2 },
-  { defId: "rift_walker", quantity: 2 },
-  { defId: "rift_insight", quantity: 2 },
-  { defId: "ember_dragon", quantity: 1 },
-  { defId: "verdant_guardian", quantity: 2 },
-  { defId: "verdant_growth", quantity: 2 },
-];
+export function findCardByRiftboundId(rid: string): CardDefinition | undefined {
+  return ALL_CARDS.find((c) => c.riftboundId.toLowerCase() === rid.toLowerCase());
+}
 
-export const STARTER_DECK_VOID: { defId: string; quantity: number }[] = [
-  { defId: "rift_crystal", quantity: 8 },
-  { defId: "void_stalker", quantity: 3 },
-  { defId: "verdant_sapling", quantity: 3 },
-  { defId: "void_rend", quantity: 2 },
-  { defId: "rift_insight", quantity: 3 },
-  { defId: "verdant_guardian", quantity: 2 },
-  { defId: "tide_leviathan", quantity: 2 },
-  { defId: "verdant_growth", quantity: 2 },
-  { defId: "void_lord", quantity: 1 },
-  { defId: "rift_walker", quantity: 2 },
-  { defId: "ember_imp", quantity: 2 },
-];
+export function getLegends(): CardDefinition[] {
+  return ALL_CARDS.filter((c) => c.type === "Legend");
+}
+
+export function getBattlefields(): CardDefinition[] {
+  return ALL_CARDS.filter((c) => c.type === "Battlefield");
+}
+
+export function getBasicRunes(): CardDefinition[] {
+  // Basic runes are typed "Rune" with simple text "Tap: Add ..."
+  return ALL_CARDS.filter((c) => c.type === "Rune");
+}
+
+export function findBasicRuneOfDomain(domain: Domain): CardDefinition | undefined {
+  return ALL_CARDS.find(
+    (c) =>
+      c.type === "Rune" &&
+      c.rarity === "Common" &&
+      c.domains.length === 1 &&
+      c.domains[0] === domain,
+  );
+}
+
+export function getDomainSymbol(d: Domain): string {
+  return {
+    Fury: "🔥",
+    Calm: "🌿",
+    Mind: "💧",
+    Body: "🛡",
+    Chaos: "💜",
+    Order: "✨",
+    Colorless: "⚪",
+  }[d];
+}
+
+export function getDomainHex(d: Domain): string {
+  return {
+    Fury: "#dc2626",
+    Calm: "#16a34a",
+    Mind: "#2563eb",
+    Body: "#ea580c",
+    Chaos: "#9333ea",
+    Order: "#eab308",
+    Colorless: "#71717a",
+  }[d];
+}
+
+// Cards that the engine can play meaningfully right now (vanilla stats + supported keywords)
+export function isMVPPlayable(c: CardDefinition): boolean {
+  if (c.type === "Battlefield") return true;
+  if (c.type === "Legend") return c.isVanilla; // legend abilities mostly unimplemented
+  if (c.type === "Rune") return true;
+  if (c.type === "Unit") {
+    return c.isVanilla || c.assault > 0 || c.shield > 0;
+  }
+  if (c.type === "Spell") {
+    // Skip spells for MVP — most have unique effects we haven't coded
+    return false;
+  }
+  if (c.type === "Gear") return c.isVanilla;
+  return false;
+}

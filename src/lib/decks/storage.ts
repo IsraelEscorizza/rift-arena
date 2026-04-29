@@ -1,28 +1,36 @@
 "use client";
 
-import { Deck } from "@/lib/game/types";
-import { STARTER_DECK_EMBER, STARTER_DECK_VOID } from "@/lib/cards/database";
+import { DeckList } from "@/lib/game/types";
+import { STARTER_DECKS } from "./starters";
 
-const KEY = "riftarena.decks.v1";
+const KEY = "riftarena.decks.v2";
 
-export const STARTER_DECKS: Deck[] = [
-  { id: "starter-ember", name: "Ember Rush (Starter)", cards: STARTER_DECK_EMBER },
-  { id: "starter-void", name: "Void Control (Starter)", cards: STARTER_DECK_VOID },
-];
+export { STARTER_DECKS };
 
-export function loadDecks(): Deck[] {
+export function loadDecks(): DeckList[] {
   if (typeof window === "undefined") return STARTER_DECKS;
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return STARTER_DECKS;
-    const parsed = JSON.parse(raw) as Deck[];
-    return [...STARTER_DECKS, ...parsed];
+    const custom = JSON.parse(raw) as DeckList[];
+    return [...STARTER_DECKS, ...custom];
   } catch {
     return STARTER_DECKS;
   }
 }
 
-export function saveDeck(deck: Deck) {
+export function loadCustomDecks(): DeckList[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+export function saveDeck(deck: DeckList) {
   if (typeof window === "undefined") return;
   const existing = loadCustomDecks().filter((d) => d.id !== deck.id);
   existing.push(deck);
@@ -35,22 +43,14 @@ export function deleteDeck(id: string) {
   localStorage.setItem(KEY, JSON.stringify(existing));
 }
 
-export function loadCustomDecks(): Deck[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as Deck[];
-  } catch {
-    return [];
-  }
-}
-
-export function deckSize(deck: Deck) {
-  return deck.cards.reduce((sum, c) => sum + c.quantity, 0);
-}
-
-export const DECK_MIN = 30;
-export const DECK_MAX = 30;
+export const MAIN_DECK_MIN = 40;
+export const RUNE_DECK_SIZE = 12;
 export const COPY_LIMIT = 3;
-export const RESOURCE_LIMIT = 12;
+export const BATTLEFIELDS_REQUIRED = 3;
+
+export function deckMainSize(d: DeckList) {
+  return d.mainDeck.reduce((s, e) => s + e.quantity, 0);
+}
+export function deckRuneSize(d: DeckList) {
+  return d.runeDeck.reduce((s, e) => s + e.quantity, 0);
+}

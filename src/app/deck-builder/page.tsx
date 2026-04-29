@@ -2,102 +2,192 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ALL_CARDS, getCard } from "@/lib/cards/database";
-import { Deck, CardType, Faction } from "@/lib/game/types";
+import Image from "next/image";
+import {
+  ALL_CARDS,
+  CARDS_BY_ID,
+  getDomainHex,
+} from "@/lib/cards/database";
+import {
+  CardDefinition,
+  CardType,
+  DeckList,
+  Domain,
+} from "@/lib/game/types";
 import {
   COPY_LIMIT,
-  DECK_MAX,
-  DECK_MIN,
-  RESOURCE_LIMIT,
-  deckSize,
+  MAIN_DECK_MIN,
+  RUNE_DECK_SIZE,
+  BATTLEFIELDS_REQUIRED,
+  deckMainSize,
+  deckRuneSize,
   deleteDeck,
   loadCustomDecks,
   saveDeck,
 } from "@/lib/decks/storage";
-import { GameCard } from "@/components/game/Card";
-import { createCardInstance } from "@/lib/game/engine";
-import { Save, Trash2, Plus, Minus, ArrowLeft } from "lucide-react";
+import { ArrowLeft, Save, Trash2, Plus, Minus } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const TYPES: (CardType | "all")[] = [
   "all",
-  "unit",
-  "spell",
-  "resource",
-  "champion",
+  "Unit",
+  "Spell",
+  "Gear",
+  "Rune",
+  "Battlefield",
+  "Legend",
 ];
-const FACTIONS: (Faction | "all")[] = [
+const DOMAINS: (Domain | "all")[] = [
   "all",
-  "ember",
-  "void",
-  "verdant",
-  "tide",
-  "neutral",
+  "Fury",
+  "Calm",
+  "Mind",
+  "Body",
+  "Chaos",
+  "Order",
+  "Colorless",
 ];
 
-export default function DeckBuilderPage() {
-  const [deck, setDeck] = useState<Deck>({
+function newDeck(): DeckList {
+  return {
     id: `custom-${Date.now()}`,
     name: "New Deck",
-    cards: [],
-  });
+    legendId: "",
+    chosenChampionId: "",
+    mainDeck: [],
+    runeDeck: [],
+    battlefieldIds: [],
+  };
+}
+
+export default function DeckBuilderPage() {
+  const [deck, setDeck] = useState<DeckList>(newDeck);
   const [search, setSearch] = useState("");
-  const [filterType, setFilterType] = useState<CardType | "all">("all");
-  const [filterFaction, setFilterFaction] = useState<Faction | "all">("all");
-  const [savedDecks, setSavedDecks] = useState<Deck[]>([]);
+  const [filterType, setFilterType] = useState<CardType | "all">("Unit");
+  const [filterDomain, setFilterDomain] = useState<Domain | "all">("all");
+  const [savedDecks, setSavedDecks] = useState<DeckList[]>([]);
+  const [hideAlternate, setHideAlternate] = useState(true);
 
   useEffect(() => {
     setSavedDecks(loadCustomDecks());
   }, []);
 
+  const legend = deck.legendId ? CARDS_BY_ID[deck.legendId] : null;
+  const champion = deck.chosenChampionId ? CARDS_BY_ID[deck.chosenChampionId] : null;
+  const allowedDomains = legend ? legend.domains : null;
+
   const filtered = useMemo(() => {
     return ALL_CARDS.filter((c) => {
       if (filterType !== "all" && c.type !== filterType) return false;
-      if (filterFaction !== "all" && c.faction !== filterFaction) return false;
+      if (filterDomain !== "all" && !c.domains.includes(filterDomain)) return false;
       if (search && !c.name.toLowerCase().includes(search.toLowerCase()))
         return false;
-      return true;
-    });
-  }, [filterType, filterFaction, search]);
-
-  function addCard(defId: string) {
-    const def = getCard(defId);
-    setDeck((d) => {
-      const existing = d.cards.find((c) => c.defId === defId);
-      const totalSize = deckSize(d);
-      if (totalSize >= DECK_MAX) return d;
-      const limit = def.type === "resource" ? RESOURCE_LIMIT : COPY_LIMIT;
-      if (existing) {
-        if (existing.quantity >= limit) return d;
-        return {
-          ...d,
-          cards: d.cards.map((c) =>
-            c.defId === defId ? { ...c, quantity: c.quantity + 1 } : c,
-          ),
-        };
+      if (hideAlternate) {
+        // Crude alt-art filter
+        if (c.name.includes("Alternate Art")) return false;
+        if (c.name.includes("Overnumbered")) return false;
       }
-      return { ...d, cards: [...d.cards, { defId, quantity: 1 }] };
+      // Domain identity check (only if not picking a Legend)
+      if (allowedDomains && c.type !== "Legend") {
+        if (
+          !c.domains.every((d) => allowedDomains.includes(d) || d === "Colorless")
+        )
+          return false;
+      }
+      return true;
+    }).slice(0, 200);
+  }, [filterType, filterDomain, search, allowedDomains, hideAlternate]);
+
+  function setCardCount(
+    listKey: "mainDeck" | "runeDeck",
+    defId: string,
+    delta: number,
+  ) {
+    setDeck((d) => {
+      const list = d[listKey];
+      const existing = list.find((c) => c.defId === defId);
+      const newQty = (existing?.quantity ?? 0) + delta;
+      let newList;
+      if (newQty <= 0) {
+        newList = list.filter((c) => c.defId !== defId);
+      } else if (existing) {
+        newList = list.map((c) =>
+          c.defId === defId ? { ...c, quantity: newQty } : c,
+        );
+      } else {
+        newList = [...list, { defId, quantity: newQty }];
+      }
+      return { ...d, [listKey]: newList };
     });
   }
 
-  function removeCard(defId: string) {
+  function setLegend(c: CardDefinition) {
+    setDeck((d) => ({
+      ...d,
+      legendId: c.id,
+      // Clear cards that violate new domain identity
+      mainDeck: d.mainDeck.filter((e) => {
+        const cd = CARDS_BY_ID[e.defId];
+        return cd.domains.every(
+          (dd) => c.domains.includes(dd) || dd === "Colorless",
+        );
+      }),
+      runeDeck: d.runeDeck.filter((e) => {
+        const cd = CARDS_BY_ID[e.defId];
+        return cd.domains.every(
+          (dd) => c.domains.includes(dd) || dd === "Colorless",
+        );
+      }),
+    }));
+  }
+
+  function setChampion(c: CardDefinition) {
+    setDeck((d) => ({ ...d, chosenChampionId: c.id }));
+  }
+
+  function toggleBattlefield(c: CardDefinition) {
     setDeck((d) => {
-      const existing = d.cards.find((c) => c.defId === defId);
-      if (!existing) return d;
-      if (existing.quantity <= 1) {
-        return { ...d, cards: d.cards.filter((c) => c.defId !== defId) };
+      if (d.battlefieldIds.includes(c.id)) {
+        return {
+          ...d,
+          battlefieldIds: d.battlefieldIds.filter((id) => id !== c.id),
+        };
       }
-      return {
-        ...d,
-        cards: d.cards.map((c) =>
-          c.defId === defId ? { ...c, quantity: c.quantity - 1 } : c,
-        ),
-      };
+      if (d.battlefieldIds.length >= BATTLEFIELDS_REQUIRED) return d;
+      return { ...d, battlefieldIds: [...d.battlefieldIds, c.id] };
     });
+  }
+
+  function handleCardClick(c: CardDefinition) {
+    if (c.type === "Legend") return setLegend(c);
+    if (c.type === "Battlefield") return toggleBattlefield(c);
+    if (c.type === "Rune") return setCardCount("runeDeck", c.id, 1);
+    // Default: main deck
+    if (c.type === "Unit" && c.supertype === "Champion" && !deck.chosenChampionId) {
+      return setChampion(c);
+    }
+    setCardCount("mainDeck", c.id, 1);
   }
 
   function handleSave() {
-    if (deckSize(deck) < DECK_MIN) {
-      alert(`Deck must have at least ${DECK_MIN} cards.`);
+    if (!deck.legendId) {
+      alert("Pick a Champion Legend first.");
+      return;
+    }
+    if (!deck.chosenChampionId) {
+      alert("Pick a Chosen Champion first.");
+      return;
+    }
+    if (deckMainSize(deck) < MAIN_DECK_MIN) {
+      alert(`Main deck must have at least ${MAIN_DECK_MIN} cards.`);
+      return;
+    }
+    if (deckRuneSize(deck) !== RUNE_DECK_SIZE) {
+      alert(`Rune deck must have exactly ${RUNE_DECK_SIZE} runes.`);
+      return;
+    }
+    if (deck.battlefieldIds.length !== BATTLEFIELDS_REQUIRED) {
+      alert(`Pick exactly ${BATTLEFIELDS_REQUIRED} battlefields.`);
       return;
     }
     saveDeck(deck);
@@ -105,22 +195,11 @@ export default function DeckBuilderPage() {
     alert("Saved!");
   }
 
-  function loadDeck(d: Deck) {
-    setDeck(d);
-  }
-
-  function newDeck() {
-    setDeck({
-      id: `custom-${Date.now()}`,
-      name: "New Deck",
-      cards: [],
-    });
-  }
-
-  const size = deckSize(deck);
+  const mainSize = deckMainSize(deck);
+  const runeSize = deckRuneSize(deck);
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(ellipse_at_top,_#1a0b2e_0%,_#0a0418_70%)] text-white">
+    <main className="min-h-screen bg-[radial-gradient(ellipse_at_top,_#1a0b2e_0%,_#050210_70%)] text-white">
       <header className="flex items-center justify-between border-b border-fuchsia-900/40 bg-black/60 px-4 py-3">
         <Link
           href="/"
@@ -132,7 +211,7 @@ export default function DeckBuilderPage() {
         <div className="w-20" />
       </header>
 
-      <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-[1fr_360px]">
+      <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-[1fr_380px]">
         {/* Card pool */}
         <section>
           <div className="mb-3 flex flex-wrap gap-2">
@@ -147,7 +226,7 @@ export default function DeckBuilderPage() {
               onChange={(e) =>
                 setFilterType(e.target.value as CardType | "all")
               }
-              className="rounded bg-black/60 px-2 py-2 text-sm capitalize"
+              className="rounded bg-black/60 px-2 py-2 text-sm"
             >
               {TYPES.map((t) => (
                 <option key={t} value={t}>
@@ -156,105 +235,143 @@ export default function DeckBuilderPage() {
               ))}
             </select>
             <select
-              value={filterFaction}
-              onChange={(e) =>
-                setFilterFaction(e.target.value as Faction | "all")
-              }
-              className="rounded bg-black/60 px-2 py-2 text-sm capitalize"
+              value={filterDomain}
+              onChange={(e) => setFilterDomain(e.target.value as Domain | "all")}
+              className="rounded bg-black/60 px-2 py-2 text-sm"
             >
-              {FACTIONS.map((f) => (
-                <option key={f} value={f}>
-                  {f}
+              {DOMAINS.map((d) => (
+                <option key={d} value={d}>
+                  {d}
                 </option>
               ))}
             </select>
+            <label className="flex items-center gap-1 text-xs opacity-80">
+              <input
+                type="checkbox"
+                checked={hideAlternate}
+                onChange={(e) => setHideAlternate(e.target.checked)}
+              />
+              Hide alt arts
+            </label>
           </div>
 
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-5 xl:grid-cols-6">
-            {filtered.map((def) => {
-              const inDeck =
-                deck.cards.find((c) => c.defId === def.id)?.quantity ?? 0;
-              return (
-                <div key={def.id} className="flex flex-col items-center gap-1">
-                  <GameCard
-                    card={createCardInstance(def.id, "preview")}
-                    onClick={() => addCard(def.id)}
-                  />
-                  <div className="flex items-center gap-2 text-xs">
-                    <button
-                      onClick={() => removeCard(def.id)}
-                      className="rounded bg-red-700 p-1 hover:bg-red-600 disabled:opacity-30"
-                      disabled={inDeck === 0}
-                    >
-                      <Minus className="h-3 w-3" />
-                    </button>
-                    <span className="w-6 text-center font-bold">{inDeck}</span>
-                    <button
-                      onClick={() => addCard(def.id)}
-                      className="rounded bg-emerald-700 p-1 hover:bg-emerald-600"
-                    >
-                      <Plus className="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="text-xs opacity-50 mb-2">
+            Showing {filtered.length} cards (max 200 displayed). Click to add.
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7">
+            {filtered.map((c) => (
+              <CardTile
+                key={c.id}
+                card={c}
+                count={
+                  c.type === "Rune"
+                    ? deck.runeDeck.find((e) => e.defId === c.id)?.quantity ?? 0
+                    : c.type === "Battlefield"
+                      ? deck.battlefieldIds.includes(c.id) ? 1 : 0
+                      : c.type === "Legend"
+                        ? deck.legendId === c.id ? 1 : 0
+                        : deck.mainDeck.find((e) => e.defId === c.id)?.quantity ??
+                          0
+                }
+                onClick={() => handleCardClick(c)}
+                onRemove={() => {
+                  if (c.type === "Rune") setCardCount("runeDeck", c.id, -1);
+                  else if (c.type === "Battlefield") toggleBattlefield(c);
+                  else if (c.type === "Legend") {
+                    if (deck.legendId === c.id)
+                      setDeck((d) => ({ ...d, legendId: "" }));
+                  } else setCardCount("mainDeck", c.id, -1);
+                }}
+              />
+            ))}
           </div>
         </section>
 
         {/* Deck panel */}
-        <aside className="sticky top-4 self-start rounded border border-fuchsia-900/40 bg-black/60 p-4">
+        <aside className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto self-start rounded border border-fuchsia-900/40 bg-black/60 p-3">
           <input
             value={deck.name}
             onChange={(e) => setDeck({ ...deck, name: e.target.value })}
             className="mb-2 w-full rounded bg-black/40 px-2 py-1 text-lg font-bold"
           />
-          <div
-            className={`mb-3 text-sm ${
-              size === DECK_MIN ? "text-emerald-400" : "text-yellow-400"
-            }`}
-          >
-            {size} / {DECK_MIN} cards
+
+          <div className="mb-3 grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded bg-fuchsia-950/50 p-2">
+              <div className="text-[10px] uppercase opacity-60">Legend</div>
+              <div>{legend?.name ?? "—"}</div>
+              <div className="text-[10px] opacity-50">
+                {legend?.domains.join(", ")}
+              </div>
+            </div>
+            <div className="rounded bg-fuchsia-950/50 p-2">
+              <div className="text-[10px] uppercase opacity-60">Champion</div>
+              <div>{champion?.name ?? "—"}</div>
+            </div>
           </div>
 
-          <div className="max-h-[55vh] space-y-1 overflow-y-auto pr-1">
-            {deck.cards.length === 0 && (
-              <p className="text-xs opacity-50">Click cards to add them.</p>
-            )}
-            {deck.cards
-              .map((c) => ({ ...c, def: getCard(c.defId) }))
-              .sort((a, b) => a.def.cost - b.def.cost)
-              .map(({ defId, quantity, def }) => (
-                <div
-                  key={defId}
-                  className="flex items-center justify-between rounded bg-fuchsia-950/40 px-2 py-1 text-xs"
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 font-bold">
-                      {def.cost}
-                    </span>
-                    <span>{def.name}</span>
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <button
-                      onClick={() => removeCard(defId)}
-                      className="rounded bg-red-700 p-0.5 hover:bg-red-600"
-                    >
-                      <Minus className="h-3 w-3" />
-                    </button>
-                    <span className="w-4 text-center font-bold">
-                      {quantity}
-                    </span>
-                    <button
-                      onClick={() => addCard(defId)}
-                      className="rounded bg-emerald-700 p-0.5 hover:bg-emerald-600"
-                    >
-                      <Plus className="h-3 w-3" />
-                    </button>
-                  </span>
-                </div>
-              ))}
+          <div className="mb-2 grid grid-cols-3 gap-1 text-xs">
+            <div
+              className={cn(
+                "rounded bg-black/50 p-2 text-center",
+                mainSize >= MAIN_DECK_MIN && "bg-emerald-900/40",
+              )}
+            >
+              <div className="text-[10px] opacity-60">Main</div>
+              <div className="font-bold">{mainSize}/{MAIN_DECK_MIN}+</div>
+            </div>
+            <div
+              className={cn(
+                "rounded bg-black/50 p-2 text-center",
+                runeSize === RUNE_DECK_SIZE && "bg-emerald-900/40",
+              )}
+            >
+              <div className="text-[10px] opacity-60">Rune</div>
+              <div className="font-bold">{runeSize}/{RUNE_DECK_SIZE}</div>
+            </div>
+            <div
+              className={cn(
+                "rounded bg-black/50 p-2 text-center",
+                deck.battlefieldIds.length === BATTLEFIELDS_REQUIRED &&
+                  "bg-emerald-900/40",
+              )}
+            >
+              <div className="text-[10px] opacity-60">BFs</div>
+              <div className="font-bold">
+                {deck.battlefieldIds.length}/{BATTLEFIELDS_REQUIRED}
+              </div>
+            </div>
           </div>
+
+          <DeckSection
+            title={`Main Deck (${mainSize})`}
+            entries={deck.mainDeck.map((e) => ({
+              defId: e.defId,
+              qty: e.quantity,
+            }))}
+            onPlus={(id) => setCardCount("mainDeck", id, 1)}
+            onMinus={(id) => setCardCount("mainDeck", id, -1)}
+          />
+          <DeckSection
+            title={`Rune Deck (${runeSize})`}
+            entries={deck.runeDeck.map((e) => ({
+              defId: e.defId,
+              qty: e.quantity,
+            }))}
+            onPlus={(id) => setCardCount("runeDeck", id, 1)}
+            onMinus={(id) => setCardCount("runeDeck", id, -1)}
+          />
+          <DeckSection
+            title={`Battlefields (${deck.battlefieldIds.length})`}
+            entries={deck.battlefieldIds.map((id) => ({ defId: id, qty: 1 }))}
+            onPlus={() => {}}
+            onMinus={(id) =>
+              setDeck((d) => ({
+                ...d,
+                battlefieldIds: d.battlefieldIds.filter((x) => x !== id),
+              }))
+            }
+          />
 
           <div className="mt-3 flex gap-2">
             <button
@@ -264,7 +381,7 @@ export default function DeckBuilderPage() {
               <Save className="h-4 w-4" /> Save
             </button>
             <button
-              onClick={newDeck}
+              onClick={() => setDeck(newDeck())}
               className="rounded bg-zinc-700 px-3 py-2 text-sm hover:bg-zinc-600"
             >
               New
@@ -281,10 +398,10 @@ export default function DeckBuilderPage() {
                     className="flex items-center justify-between rounded bg-black/40 px-2 py-1 text-xs"
                   >
                     <button
-                      onClick={() => loadDeck(d)}
+                      onClick={() => setDeck(d)}
                       className="flex-1 text-left hover:underline"
                     >
-                      {d.name} ({deckSize(d)})
+                      {d.name}
                     </button>
                     <button
                       onClick={() => {
@@ -303,5 +420,117 @@ export default function DeckBuilderPage() {
         </aside>
       </div>
     </main>
+  );
+}
+
+function CardTile({
+  card,
+  count,
+  onClick,
+  onRemove,
+}: {
+  card: CardDefinition;
+  count: number;
+  onClick: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center">
+      <button
+        onClick={onClick}
+        style={{ borderColor: getDomainHex(card.domains[0] ?? "Colorless") }}
+        className={cn(
+          "relative h-32 w-24 overflow-hidden rounded border-2 bg-black hover:scale-105 transition",
+          count > 0 && "ring-2 ring-yellow-400",
+        )}
+      >
+        {card.imageUrl && (
+          <Image
+            src={card.imageUrl}
+            alt={card.name}
+            fill
+            sizes="96px"
+            className="object-cover"
+            unoptimized
+          />
+        )}
+        {count > 0 && (
+          <div className="absolute right-0.5 top-0.5 rounded bg-yellow-400 px-1 text-[10px] font-bold text-black">
+            ×{count}
+          </div>
+        )}
+      </button>
+      <div className="mt-0.5 flex w-full items-center justify-between gap-1 text-[10px]">
+        <button
+          onClick={onRemove}
+          disabled={count === 0}
+          className="rounded bg-red-700 px-1 disabled:opacity-30"
+        >
+          <Minus className="h-3 w-3" />
+        </button>
+        <span className="line-clamp-1 max-w-[70%] text-center opacity-80">
+          {card.name}
+        </span>
+        <button
+          onClick={onClick}
+          className="rounded bg-emerald-700 px-1"
+        >
+          <Plus className="h-3 w-3" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DeckSection({
+  title,
+  entries,
+  onPlus,
+  onMinus,
+}: {
+  title: string;
+  entries: { defId: string; qty: number }[];
+  onPlus: (id: string) => void;
+  onMinus: (id: string) => void;
+}) {
+  return (
+    <div className="mb-3">
+      <h3 className="mb-1 text-[10px] uppercase opacity-60">{title}</h3>
+      <div className="space-y-0.5 max-h-48 overflow-y-auto pr-1">
+        {entries.length === 0 && (
+          <div className="text-[10px] opacity-40">— empty —</div>
+        )}
+        {entries
+          .map((e) => ({ ...e, def: CARDS_BY_ID[e.defId] }))
+          .filter((e) => e.def)
+          .sort((a, b) => (a.def.energy ?? 0) - (b.def.energy ?? 0))
+          .map(({ defId, qty, def }) => (
+            <div
+              key={defId}
+              className="flex items-center gap-1 rounded bg-fuchsia-950/40 px-1.5 py-0.5 text-[11px]"
+            >
+              <span
+                style={{ background: getDomainHex(def.domains[0] ?? "Colorless") }}
+                className="h-3 w-3 rounded-sm"
+              />
+              <span className="flex-1 truncate">{def.name}</span>
+              <span className="opacity-60">{def.energy ?? "—"}E</span>
+              <button
+                onClick={() => onMinus(defId)}
+                className="rounded bg-red-700 p-0.5"
+              >
+                <Minus className="h-3 w-3" />
+              </button>
+              <span className="w-5 text-center font-bold">{qty}</span>
+              <button
+                onClick={() => onPlus(defId)}
+                className="rounded bg-emerald-700 p-0.5"
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+      </div>
+    </div>
   );
 }

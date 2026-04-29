@@ -1,5 +1,15 @@
-import { getCard } from "@/lib/cards/database";
-import { canPlayCard, declareAttacker, nextPhase, playCard } from "./engine";
+// Simple AI for Riftbound MVP — plays vanilla units, moves toward battlefields, ends turn.
+
+import { CARDS_BY_ID } from "@/lib/cards/database";
+import {
+  canPlayCard,
+  canStandardMove,
+  nextPhase,
+  playCard,
+  recycleRuneForPower,
+  standardMove,
+  tapRuneForEnergy,
+} from "./engine";
 import { GameState } from "./types";
 
 export function runAITurn(state: GameState): GameState {
@@ -7,70 +17,63 @@ export function runAITurn(state: GameState): GameState {
   let s = state;
   let safety = 0;
 
-  while (s.activePlayerId === "p2" && !s.winnerId && safety++ < 100) {
-    const phase = s.phase;
+  while (s.turnPlayerId === "p2" && !s.winnerId && safety++ < 100) {
+    if (s.phase !== "main") {
+      // The engine auto-advances to main at game start; if we're stuck, end turn
+      s = nextPhase(s);
+      continue;
+    }
+
     const ai = s.players.find((p) => p.id === "p2")!;
-    const human = s.players.find((p) => p.id === "p1")!;
 
-    if (phase === "main1" || phase === "main2") {
-      const playable = ai.hand
-        .map((c) => ({ c, def: getCard(c.defId) }))
-        .filter(({ c }) => canPlayCard(s, c.uid))
-        .sort((a, b) => b.def.cost - a.def.cost);
+    // 1. Tap all runes to maximize energy
+    for (const r of ai.base.runes) {
+      if (!r.exhausted) {
+        s = tapRuneForEnergy(s, r.uid);
+      }
+    }
+    // 2. Recycle runes if we need power for a card we want to play
+    for (const c of ai.hand) {
+      const def = CARDS_BY_ID[c.defId];
+      if (def.type !== "Unit") continue;
+      const needPower = def.power ?? 0;
+      const havePower =
+        Object.values(ai.pool.power).reduce((a, b) => a + b, 0);
+      if (havePower < needPower && ai.base.runes.some((r) => !r.exhausted)) {
+        // Recycle one rune that matches a needed domain (or any)
+        const matching =
+          ai.base.runes.find((r) => def.domains.includes(r.domain)) ??
+          ai.base.runes[0];
+        if (matching) s = recycleRuneForPower(s, matching.uid);
+      }
+    }
 
-      if (playable.length > 0) {
-        const choice = playable[0];
-        let target: string | undefined;
-        if (choice.def.effects) {
-          const needsTarget = choice.def.effects.some(
-            (e) =>
-              e.target === "any" ||
-              e.target === "unit" ||
-              e.kind === "destroy",
-          );
-          if (needsTarget) {
-            const enemyUnits = human.battlefield.filter((c) => {
-              const d = getCard(c.defId);
-              return d.type === "unit" || d.type === "champion";
-            });
-            if (choice.def.effects[0].kind === "destroy") {
-              target = enemyUnits.sort((a, b) => {
-                const da = getCard(a.defId);
-                const db = getCard(b.defId);
-                return (db.attack ?? 0) - (da.attack ?? 0);
-              })[0]?.uid;
-              if (!target) {
-                s = nextPhase(s);
-                continue;
-              }
-            } else {
-              target = enemyUnits[0]?.uid ?? "p1";
-            }
-          }
-        }
-        s = playCard(s, choice.c.uid, target);
+    // 3. Try to play any unit we can afford
+    const playable = ai.hand
+      .filter((c) => canPlayCard(s, c.uid))
+      .map((c) => ({ c, def: CARDS_BY_ID[c.defId] }))
+      .filter(({ def }) => def.type === "Unit")
+      .sort((a, b) => (b.def.energy ?? 0) - (a.def.energy ?? 0));
+
+    if (playable.length > 0) {
+      s = playCard(s, playable[0].c.uid);
+      continue;
+    }
+
+    // 4. Move ready units to a battlefield (prefer uncontrolled, else opponent's)
+    const readyUnits = ai.base.units.filter((u) => !u.exhausted && !u.battlefieldId);
+    if (readyUnits.length > 0) {
+      const targetBf =
+        s.battlefields.find((b) => b.controllerId === null) ??
+        s.battlefields.find((b) => b.controllerId !== "p2") ??
+        s.battlefields[0];
+      if (targetBf) {
+        s = standardMove(s, readyUnits[0].uid, targetBf.uid);
         continue;
       }
-      s = nextPhase(s);
-      continue;
     }
 
-    if (phase === "combat_declare_attackers") {
-      const attackers = ai.battlefield.filter((c) => {
-        const d = getCard(c.defId);
-        return (
-          (d.type === "unit" || d.type === "champion") &&
-          !c.tapped &&
-          !c.summoningSick
-        );
-      });
-      for (const a of attackers) {
-        s = declareAttacker(s, a.uid);
-      }
-      s = nextPhase(s);
-      continue;
-    }
-
+    // 5. Nothing to do — end turn
     s = nextPhase(s);
   }
 

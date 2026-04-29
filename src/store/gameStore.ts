@@ -2,30 +2,29 @@
 
 import { create } from "zustand";
 import {
-  assignBlocker,
   createGame,
-  declareAttacker,
+  enterPhase,
   nextPhase,
   playCard,
+  recycleRuneForPower,
+  standardMove,
+  tapRuneForEnergy,
 } from "@/lib/game/engine";
-import { Deck, GameState } from "@/lib/game/types";
+import { DeckList, GameState } from "@/lib/game/types";
 
 interface GameStore {
   state: GameState | null;
-  selectedCardUid: string | null;
-  pendingTargetForUid: string | null;
   startGame: (
     p1Name: string,
-    p1Deck: Deck,
+    p1Deck: DeckList,
     p2Name: string,
-    p2Deck: Deck,
+    p2Deck: DeckList,
   ) => void;
-  selectCard: (uid: string | null) => void;
-  setPendingTarget: (uid: string | null) => void;
-  playCard: (uid: string, targetUid?: string) => void;
   nextPhase: () => void;
-  declareAttacker: (uid: string) => void;
-  assignBlocker: (attackerUid: string, blockerUid?: string) => void;
+  playCard: (uid: string) => void;
+  tapRune: (uid: string) => void;
+  recycleRune: (uid: string) => void;
+  standardMove: (unitUid: string, destBfUid: string | null) => void;
   reset: () => void;
 }
 
@@ -35,38 +34,33 @@ function clone<T>(obj: T): T {
 
 export const useGameStore = create<GameStore>((set, get) => ({
   state: null,
-  selectedCardUid: null,
-  pendingTargetForUid: null,
   startGame: (p1Name, p1Deck, p2Name, p2Deck) => {
     set({ state: createGame(p1Name, p1Deck, p2Name, p2Deck) });
-  },
-  selectCard: (uid) => set({ selectedCardUid: uid }),
-  setPendingTarget: (uid) => set({ pendingTargetForUid: uid }),
-  playCard: (uid, targetUid) => {
-    const cur = get().state;
-    if (!cur) return;
-    const next = playCard(clone(cur), uid, targetUid);
-    set({ state: next, selectedCardUid: null, pendingTargetForUid: null });
   },
   nextPhase: () => {
     const cur = get().state;
     if (!cur) return;
     set({ state: nextPhase(clone(cur)) });
   },
-  declareAttacker: (uid) => {
+  playCard: (uid) => {
     const cur = get().state;
     if (!cur) return;
-    set({ state: declareAttacker(clone(cur), uid) });
+    set({ state: playCard(clone(cur), uid) });
   },
-  assignBlocker: (attackerUid, blockerUid) => {
+  tapRune: (uid) => {
     const cur = get().state;
     if (!cur) return;
-    set({ state: assignBlocker(clone(cur), attackerUid, blockerUid) });
+    set({ state: tapRuneForEnergy(clone(cur), uid) });
   },
-  reset: () =>
-    set({
-      state: null,
-      selectedCardUid: null,
-      pendingTargetForUid: null,
-    }),
+  recycleRune: (uid) => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: recycleRuneForPower(clone(cur), uid) });
+  },
+  standardMove: (unitUid, destBfUid) => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: standardMove(clone(cur), unitUid, destBfUid) });
+  },
+  reset: () => set({ state: null }),
 }));

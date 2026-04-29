@@ -1,106 +1,123 @@
 "use client";
 
 import { motion } from "framer-motion";
+import Image from "next/image";
 import { CardInstance } from "@/lib/game/types";
-import { getCard } from "@/lib/cards/database";
-import { cn, FACTION_COLORS, FACTION_GLOW } from "@/lib/utils";
-import { Sparkles, Sword, Heart, Droplet, Zap } from "lucide-react";
+import { CARDS_BY_ID, getDomainHex } from "@/lib/cards/database";
+import { cn } from "@/lib/utils";
+import { Sparkles } from "lucide-react";
 
 interface Props {
   card: CardInstance;
   faceDown?: boolean;
   selected?: boolean;
-  attacking?: boolean;
-  blocking?: boolean;
-  small?: boolean;
+  highlighted?: boolean;
+  size?: "sm" | "md" | "lg";
   onClick?: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
+
+const SIZES = {
+  sm: { w: 70, h: 100 },
+  md: { w: 110, h: 154 },
+  lg: { w: 180, h: 252 },
+};
 
 export function GameCard({
   card,
   faceDown,
   selected,
-  attacking,
-  blocking,
-  small,
+  highlighted,
+  size = "md",
   onClick,
+  onContextMenu,
 }: Props) {
+  const { w, h } = SIZES[size];
+
   if (faceDown) {
     return (
       <div
-        className={cn(
-          "relative rounded-lg border-2 border-fuchsia-500/40 bg-gradient-to-br from-indigo-950 to-fuchsia-950 shadow-lg",
-          small ? "h-20 w-14" : "h-44 w-32",
-        )}
+        style={{ width: w, height: h }}
+        className="relative shrink-0 rounded-lg border-2 border-fuchsia-500/40 bg-gradient-to-br from-indigo-950 to-fuchsia-950 shadow-lg"
       >
         <div className="absolute inset-0 flex items-center justify-center">
-          <Sparkles className="h-8 w-8 text-fuchsia-400/60" />
+          <Sparkles className="h-6 w-6 text-fuchsia-400/60" />
         </div>
       </div>
     );
   }
 
-  const def = getCard(card.defId);
-  const faction = FACTION_COLORS[def.faction] ?? FACTION_COLORS.neutral;
-  const glow = FACTION_GLOW[def.faction] ?? FACTION_GLOW.neutral;
-  const totalAttack = (def.attack ?? 0) + card.buffs.attack;
-  const totalHealth = (def.health ?? 0) + card.buffs.health - card.damage;
+  const def = CARDS_BY_ID[card.defId];
+  const domainColor = def
+    ? getDomainHex(def.domains[0] ?? "Colorless")
+    : "#888";
+  const totalMight = (def?.might ?? 0) + (card.buffCount ?? 0) - (card.damage ?? 0);
 
   return (
     <motion.button
-      whileHover={{ y: small ? -4 : -8, scale: small ? 1.02 : 1.04 }}
+      whileHover={{ y: -4, scale: 1.04 }}
       animate={{
-        rotate: card.tapped ? 90 : 0,
-        opacity: card.summoningSick ? 0.75 : 1,
+        rotate: card.exhausted ? 6 : 0,
+        opacity: card.exhausted ? 0.7 : 1,
       }}
       onClick={onClick}
+      onContextMenu={onContextMenu}
+      style={{
+        width: w,
+        height: h,
+        borderColor: domainColor,
+      }}
       className={cn(
-        "group relative rounded-lg border-2 bg-gradient-to-br p-1.5 text-left text-white shadow-lg transition",
-        faction,
-        glow,
+        "relative shrink-0 overflow-hidden rounded-lg border-2 bg-black shadow-lg transition",
         selected && "ring-4 ring-yellow-400",
-        attacking && "ring-4 ring-red-500",
-        blocking && "ring-4 ring-cyan-400",
-        small ? "h-20 w-14" : "h-44 w-32",
+        highlighted && "ring-4 ring-cyan-300",
       )}
     >
-      <div className="flex items-center justify-between text-[10px] font-bold">
-        <span className="truncate">{small ? "" : def.name}</span>
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60">
-          {def.cost}
-        </span>
-      </div>
-
-      {!small && (
-        <div className="mt-1 flex h-16 items-center justify-center rounded bg-black/30 text-2xl">
-          {def.type === "unit" || def.type === "champion" ? (
-            <Sword className="h-8 w-8 opacity-70" />
-          ) : def.type === "spell" ? (
-            <Zap className="h-8 w-8 opacity-70" />
-          ) : (
-            <Droplet className="h-8 w-8 opacity-70" />
-          )}
+      {def?.imageUrl && (
+        <Image
+          src={def.imageUrl}
+          alt={def.name}
+          width={w}
+          height={h}
+          className="object-cover"
+          unoptimized
+        />
+      )}
+      {/* Damage overlay */}
+      {card.damage > 0 && (
+        <div className="absolute inset-x-1 bottom-1 rounded bg-red-700/90 px-1 text-center text-[10px] font-bold text-white">
+          DMG {card.damage}
         </div>
       )}
-
-      {!small && (
-        <div className="mt-1 line-clamp-3 text-[9px] leading-tight opacity-90">
-          {def.text}
-        </div>
-      )}
-
-      {(def.type === "unit" || def.type === "champion") && (
-        <div className="absolute bottom-1 right-1 flex gap-1 text-[10px] font-extrabold">
-          <span className="flex items-center gap-0.5 rounded bg-orange-700 px-1">
-            <Sword className="h-3 w-3" />
-            {totalAttack}
-          </span>
-          <span className="flex items-center gap-0.5 rounded bg-red-700 px-1">
-            <Heart className="h-3 w-3" />
-            {totalHealth}
-          </span>
+      {/* Live might (units only) */}
+      {def?.type === "Unit" && (
+        <div className="absolute right-1 top-1 rounded bg-black/80 px-1 text-[10px] font-bold text-white">
+          {totalMight}
         </div>
       )}
     </motion.button>
+  );
+}
+
+export function CardTooltip({ defId }: { defId: string }) {
+  const def = CARDS_BY_ID[defId];
+  if (!def) return null;
+  return (
+    <div className="max-w-xs rounded border border-fuchsia-700 bg-black/95 p-2 text-xs text-white shadow-2xl">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-bold">{def.name}</span>
+        <span className="text-[10px] opacity-60">
+          {def.energy ?? "—"}E / {def.power ?? 0}P
+        </span>
+      </div>
+      <div className="mb-1 text-[10px] opacity-70">
+        {def.type} • {def.domains.join("/")} {def.might != null && `• ${def.might} Might`}
+      </div>
+      {def.rulesText && (
+        <div className="whitespace-pre-line text-[11px] leading-tight opacity-90">
+          {def.rulesText}
+        </div>
+      )}
+    </div>
   );
 }
