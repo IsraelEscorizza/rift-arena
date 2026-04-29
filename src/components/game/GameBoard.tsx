@@ -9,7 +9,7 @@ import {
   RuneInstance,
 } from "@/lib/game/types";
 import { CARDS_BY_ID, getDomainHex } from "@/lib/cards/database";
-import { canPlayCard, canStandardMove } from "@/lib/game/engine";
+import { canPlayCard, canStandardMove, canUntapRune } from "@/lib/game/engine";
 import { useGameStore } from "@/store/gameStore";
 import { GameCard, CardTooltip } from "./Card";
 import { cn } from "@/lib/utils";
@@ -39,6 +39,7 @@ export function GameBoard() {
   const playCard = useGameStore((s) => s.playCard);
   const next = useGameStore((s) => s.nextPhase);
   const tapRune = useGameStore((s) => s.tapRune);
+  const untapRune = useGameStore((s) => s.untapRune);
   const recycleRune = useGameStore((s) => s.recycleRune);
   const move = useGameStore((s) => s.standardMove);
 
@@ -137,7 +138,9 @@ export function GameBoard() {
             : false
         }
         onTapRune={tapRune}
+        onUntapRune={untapRune}
         onRecycleRune={recycleRune}
+        canUntap={(uid) => canUntapRune(state, uid)}
       />
 
       {/* Hand */}
@@ -238,7 +241,9 @@ function PlayerStrip({
   onBaseClick,
   canMoveToBase,
   onTapRune,
+  onUntapRune,
   onRecycleRune,
+  canUntap,
 }: {
   player: PlayerState;
   active: boolean;
@@ -248,7 +253,9 @@ function PlayerStrip({
   onBaseClick?: () => void;
   canMoveToBase?: boolean;
   onTapRune?: (uid: string) => void;
+  onUntapRune?: (uid: string) => void;
   onRecycleRune?: (uid: string) => void;
+  canUntap?: (uid: string) => boolean;
 }) {
   const baseUnits = player.base.units.filter((u) => !u.battlefieldId);
   return (
@@ -335,15 +342,20 @@ function PlayerStrip({
             Runes ({player.base.runes.length})
           </div>
           <div className="mt-1 flex flex-wrap gap-1">
-            {player.base.runes.map((r) => (
-              <RuneChip
-                key={r.uid}
-                rune={r}
-                onTap={() => onTapRune?.(r.uid)}
-                onRecycle={() => onRecycleRune?.(r.uid)}
-                disabled={!active}
-              />
-            ))}
+            {player.base.runes.map((r) => {
+              const refundable = canUntap?.(r.uid) ?? false;
+              return (
+                <RuneChip
+                  key={r.uid}
+                  rune={r}
+                  onTap={() => onTapRune?.(r.uid)}
+                  onUntap={() => onUntapRune?.(r.uid)}
+                  onRecycle={() => onRecycleRune?.(r.uid)}
+                  disabled={!active}
+                  refundable={refundable}
+                />
+              );
+            })}
           </div>
         </div>
       )}
@@ -359,29 +371,48 @@ function PlayerStrip({
 function RuneChip({
   rune,
   onTap,
+  onUntap,
   onRecycle,
   disabled,
+  refundable,
 }: {
   rune: RuneInstance;
   onTap: () => void;
+  onUntap: () => void;
   onRecycle: () => void;
   disabled: boolean;
+  refundable: boolean;
 }) {
   const color = getDomainHex(rune.domain);
+  // Click toggles tap state. Tapping when ready, untapping when exhausted-and-refundable.
+  const handleMainClick = () => {
+    if (rune.exhausted) {
+      if (refundable) onUntap();
+    } else {
+      onTap();
+    }
+  };
+  const mainDisabled =
+    disabled || (rune.exhausted && !refundable);
+  const tooltip = rune.exhausted
+    ? refundable
+      ? "Click to untap (refund [1] energy)"
+      : "Tapped — energy already spent, cannot refund"
+    : "Click to tap for [1] energy";
+
   return (
-    <div
-      className="relative"
-      onClick={(e) => e.stopPropagation()}
-    >
+    <div className="relative" onClick={(e) => e.stopPropagation()}>
       <button
-        onClick={onTap}
-        disabled={disabled || rune.exhausted}
-        title="Tap for [1] energy"
+        onClick={handleMainClick}
+        disabled={mainDisabled}
+        title={tooltip}
         style={{ background: color }}
         className={cn(
-          "flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold text-black shadow",
-          rune.exhausted && "opacity-40",
-          disabled && "cursor-not-allowed",
+          "flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-bold text-black shadow transition",
+          rune.exhausted && !refundable && "opacity-40",
+          rune.exhausted && refundable &&
+            "opacity-60 ring-2 ring-yellow-300 hover:opacity-100",
+          mainDisabled && "cursor-not-allowed",
         )}
       >
         {rune.domain[0]}
@@ -389,7 +420,7 @@ function RuneChip({
       <button
         onClick={onRecycle}
         disabled={disabled}
-        title="Recycle for power"
+        title="Recycle for [1] power of this domain (sends rune back to deck)"
         className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-fuchsia-700 text-[8px] font-bold hover:bg-fuchsia-500 disabled:opacity-30"
       >
         ↻

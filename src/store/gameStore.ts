@@ -9,6 +9,7 @@ import {
   recycleRuneForPower,
   standardMove,
   tapRuneForEnergy,
+  untapRune,
 } from "@/lib/game/engine";
 import { DeckList, GameState } from "@/lib/game/types";
 
@@ -23,6 +24,7 @@ interface GameStore {
   nextPhase: () => void;
   playCard: (uid: string) => void;
   tapRune: (uid: string) => void;
+  untapRune: (uid: string) => void;
   recycleRune: (uid: string) => void;
   standardMove: (unitUid: string, destBfUid: string | null) => void;
   reset: () => void;
@@ -51,6 +53,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const cur = get().state;
     if (!cur) return;
     set({ state: tapRuneForEnergy(clone(cur), uid) });
+  },
+  untapRune: (uid) => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: untapRune(clone(cur), uid) });
   },
   recycleRune: (uid) => {
     const cur = get().state;
