@@ -23,6 +23,8 @@ function detectNum(text, kw) {
   return m ? parseInt(m[1], 10) : 0;
 }
 function isPlayable(c) {
+  // Tokens are not deck-buildable
+  if (c.classification.supertype === "Token") return false;
   const text = c.text?.rich ?? c.text?.plain ?? "";
   const kw = detectKeywords(text);
   const stripped = text

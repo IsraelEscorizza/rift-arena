@@ -157,21 +157,26 @@ export function createGame(
   p1Deck: DeckList,
   p2Name: string,
   p2Deck: DeckList,
+  pickedBattlefieldIds?: { p1: string; p2: string },
 ): GameState {
   const p1 = buildPlayer("p1", p1Name, p1Deck);
   const p2 = buildPlayer("p2", p2Name, p2Deck);
 
-  // Battlefield selection: each player provides 3, randomly pick. MVP: simply take 1 each.
+  // Battlefield selection: per official rules each player picks 1 of their 3.
+  // If picks not provided, fall back to random (Duel mode).
   const bfDefs: Record<string, CardDefinition> = {};
   const battlefields: BattlefieldInstance[] = [];
-  const allBfPool = [...p1Deck.battlefieldIds, ...p2Deck.battlefieldIds];
-  const picked = shuffle(allBfPool).slice(0, BATTLEFIELDS_PER_GAME);
-  for (const id of picked) {
+  let p1Pick = pickedBattlefieldIds?.p1;
+  let p2Pick = pickedBattlefieldIds?.p2;
+  if (!p1Pick) p1Pick = shuffle(p1Deck.battlefieldIds)[0];
+  if (!p2Pick) p2Pick = shuffle(p2Deck.battlefieldIds)[0];
+  const picks: { id: string; ownerId: string }[] = [];
+  if (p1Pick) picks.push({ id: p1Pick, ownerId: "p1" });
+  if (p2Pick) picks.push({ id: p2Pick, ownerId: "p2" });
+  for (const { id, ownerId } of picks) {
     const def = CARDS_BY_ID[id];
     if (!def) continue;
     bfDefs[id] = def;
-    const ownerId =
-      p1Deck.battlefieldIds.includes(id) ? "p1" : "p2";
     battlefields.push(buildBattlefield(id, ownerId));
   }
 
