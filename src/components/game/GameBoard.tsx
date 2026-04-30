@@ -28,12 +28,12 @@ import { cn } from "@/lib/utils";
 import {
   ArrowRight,
   BookOpen,
-  Crown,
   Layers,
   Sparkle,
   Trash2,
   Trophy,
   X,
+  Zap,
 } from "lucide-react";
 
 const PHASE_LABEL: Record<string, string> = {
@@ -74,7 +74,6 @@ export function GameBoard() {
   function clearSelection() {
     setSelected([]);
   }
-
   function handleUnitClick(unit: CardInstance) {
     if (unit.controllerId !== human.id) return;
     if (unit.exhausted) return;
@@ -125,40 +124,59 @@ export function GameBoard() {
       {/* Resizable layout */}
       <PanelGroup
         direction="horizontal"
-        autoSaveId="riftarena.layout.h"
+        autoSaveId="riftarena.layout.h.v2"
         className="flex-1"
       >
-        <Panel defaultSize={14} minSize={10} maxSize={25} order={1}>
-          <div className="flex h-full flex-col gap-1 overflow-y-auto p-1">
-            <SidePlayerInfo player={ai} active={!activeIsHuman} faceDown />
-            <SidePlayerInfo
-              player={human}
-              active={activeIsHuman}
-              onPlayChampion={(uid) => tryPlayHandCard(uid)}
-              championIsPlayable={
-                human.championZone
-                  ? canPlayCard(state, human.championZone.uid) ||
-                    canPotentiallyAfford(state, human.championZone.uid)
-                  : false
-              }
-              onActivateLegend={() => activateLegend()}
-              canActivateLegend={canActivateLegend(state, human.id)}
-              legendActivationLabel={getLegendActivationLabel(state, human.id)}
-            />
-          </div>
+        {/* LEFT: legend+champion full vertical */}
+        <Panel defaultSize={16} minSize={12} maxSize={28} order={1}>
+          <PanelGroup
+            direction="vertical"
+            autoSaveId="riftarena.layout.left.v2"
+            className="h-full"
+          >
+            <Panel defaultSize={50} minSize={20} order={1}>
+              <CharacterPanel
+                player={ai}
+                active={!activeIsHuman}
+                facing="opponent"
+              />
+            </Panel>
+            <ResizeBarH />
+            <Panel defaultSize={50} minSize={20} order={2}>
+              <CharacterPanel
+                player={human}
+                active={activeIsHuman}
+                facing="self"
+                onPlayChampion={(uid) => tryPlayHandCard(uid)}
+                championIsPlayable={
+                  human.championZone
+                    ? canPlayCard(state, human.championZone.uid) ||
+                      canPotentiallyAfford(state, human.championZone.uid)
+                    : false
+                }
+                onActivateLegend={() => activateLegend()}
+                canActivateLegend={canActivateLegend(state, human.id)}
+                legendActivationLabel={getLegendActivationLabel(
+                  state,
+                  human.id,
+                )}
+              />
+            </Panel>
+          </PanelGroup>
         </Panel>
         <ResizeBar />
 
-        <Panel defaultSize={66} minSize={40} order={2}>
+        {/* CENTER: play area */}
+        <Panel defaultSize={64} minSize={40} order={2}>
           <PanelGroup
             direction="vertical"
-            autoSaveId="riftarena.layout.v"
+            autoSaveId="riftarena.layout.v.v2"
             className="h-full"
           >
-            {/* Opponent area */}
-            <Panel defaultSize={22} minSize={12} order={1}>
+            {/* AI top (hand + base) */}
+            <Panel defaultSize={20} minSize={10} order={1}>
               <div className="flex h-full flex-col items-center gap-1 overflow-y-auto p-1">
-                <div className="flex gap-0.5">
+                <div className="flex justify-center gap-0.5">
                   {ai.hand.map((c) => (
                     <GameCard key={c.uid} card={c} faceDown size="sm" />
                   ))}
@@ -168,13 +186,12 @@ export function GameBoard() {
                   label="AI base"
                   size="sm"
                 />
-                <RuneRow runes={ai.base.runes} label="AI runes" size="md" disabled />
               </div>
             </Panel>
             <ResizeBarH />
 
-            {/* Battlefields */}
-            <Panel defaultSize={36} minSize={20} order={2}>
+            {/* Battlefields - centerpiece, larger */}
+            <Panel defaultSize={42} minSize={25} order={2}>
               <div className="flex h-full items-center justify-center gap-3 overflow-x-auto p-2">
                 {state.battlefields.map((bf) => (
                   <BattlefieldView
@@ -190,9 +207,9 @@ export function GameBoard() {
             </Panel>
             <ResizeBarH />
 
-            {/* Your area: base + runes */}
-            <Panel defaultSize={22} minSize={12} order={3}>
-              <div className="flex h-full flex-col items-center gap-1 overflow-y-auto p-1">
+            {/* Your base */}
+            <Panel defaultSize={18} minSize={10} order={3}>
+              <div className="flex h-full flex-col items-center p-1">
                 <UnitsRow
                   units={human.base.units.filter((u) => !u.battlefieldId)}
                   label="Your base"
@@ -205,68 +222,110 @@ export function GameBoard() {
                     selected.some((uid) => canStandardMove(state, uid, null))
                   }
                 />
-                <RuneRow
-                  runes={human.base.runes}
-                  label="Your runes"
-                  size="lg"
-                  disabled={!activeIsHuman}
-                  onTap={tapRune}
-                  onUntap={untapRune}
-                  onRecycle={recycleRune}
-                  canUntap={(uid) => canUntapRune(state, uid)}
-                  pending={pending}
-                  onPendingRecycle={recycleForPending}
-                  isValidPending={(uid) =>
-                    isValidRecycleForPending(state, uid)
-                  }
-                />
               </div>
             </Panel>
             <ResizeBarH />
 
-            {/* Hand */}
-            <Panel defaultSize={20} minSize={10} order={4}>
-              <div className="flex h-full items-end justify-center gap-1.5 overflow-x-auto bg-black/40 p-2">
-                {human.hand.map((c) => {
-                  const playable =
-                    canPlayCard(state, c.uid) ||
-                    canPotentiallyAfford(state, c.uid);
-                  return (
-                    <motion.div
-                      key={c.uid}
-                      initial={{ y: 30, opacity: 0 }}
-                      animate={{ y: 0, opacity: playable ? 1 : 0.55 }}
-                      className={cn("relative", !playable && "grayscale-[40%]")}
-                    >
-                      <GameCard
-                        card={c}
-                        size="md"
-                        onClick={() => playable && tryPlayHandCard(c.uid)}
-                      />
-                    </motion.div>
-                  );
-                })}
+            {/* Runes + Hand on the same row */}
+            <Panel defaultSize={20} minSize={12} order={4}>
+              <div className="flex h-full gap-2 p-1">
+                {/* Runes container */}
+                <div className="flex shrink-0 flex-col rounded border border-fuchsia-900/30 bg-black/40 p-1">
+                  <RuneRow
+                    runes={human.base.runes}
+                    label="Your runes"
+                    size="md"
+                    disabled={!activeIsHuman}
+                    onTap={tapRune}
+                    onUntap={untapRune}
+                    onRecycle={recycleRune}
+                    canUntap={(uid) => canUntapRune(state, uid)}
+                    pending={pending}
+                    onPendingRecycle={recycleForPending}
+                    isValidPending={(uid) =>
+                      isValidRecycleForPending(state, uid)
+                    }
+                  />
+                </div>
+                {/* Hand container */}
+                <div className="flex flex-1 flex-col rounded border border-fuchsia-900/30 bg-black/40 p-1">
+                  <div className="text-[9px] uppercase opacity-50">
+                    Your hand ({human.hand.length})
+                  </div>
+                  <div className="flex flex-1 items-end justify-center gap-1 overflow-x-auto">
+                    {human.hand.map((c) => {
+                      const playable =
+                        canPlayCard(state, c.uid) ||
+                        canPotentiallyAfford(state, c.uid);
+                      return (
+                        <motion.div
+                          key={c.uid}
+                          initial={{ y: 30, opacity: 0 }}
+                          animate={{ y: 0, opacity: playable ? 1 : 0.55 }}
+                          className={cn(
+                            "relative",
+                            !playable && "grayscale-[40%]",
+                          )}
+                        >
+                          <GameCard
+                            card={c}
+                            size="md"
+                            onClick={() => playable && tryPlayHandCard(c.uid)}
+                          />
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </Panel>
           </PanelGroup>
         </Panel>
         <ResizeBar />
 
-        {/* Log */}
-        <Panel defaultSize={20} minSize={10} maxSize={35} order={3}>
-          <div className="h-full overflow-y-auto rounded border border-fuchsia-900/40 bg-black/70 p-2 text-[11px]">
-            <div className="mb-1 flex items-center gap-1 font-bold text-fuchsia-300">
-              <BookOpen className="h-3 w-3" /> Game Log
-            </div>
-            {state.log.slice(-100).reverse().map((entry, i) => (
-              <div
-                key={i}
-                className="border-b border-white/5 py-0.5 opacity-80"
-              >
-                {entry}
+        {/* RIGHT: AI score / log / your score (vertical split) */}
+        <Panel defaultSize={20} minSize={12} maxSize={32} order={3}>
+          <PanelGroup
+            direction="vertical"
+            autoSaveId="riftarena.layout.right.v2"
+            className="h-full"
+          >
+            <Panel defaultSize={20} minSize={12} order={1}>
+              <ScoreCard
+                player={ai}
+                victoryScore={state.victoryScore}
+                active={!activeIsHuman}
+                facing="opponent"
+              />
+            </Panel>
+            <ResizeBarH />
+            <Panel defaultSize={60} minSize={30} order={2}>
+              <div className="flex h-full flex-col overflow-hidden rounded border border-fuchsia-900/40 bg-black/70">
+                <div className="flex shrink-0 items-center gap-1 border-b border-white/5 bg-black/60 px-2 py-1 text-[11px] font-bold text-fuchsia-300">
+                  <BookOpen className="h-3 w-3" /> Game Log
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 text-[11px]">
+                  {state.log.slice(-100).reverse().map((entry, i) => (
+                    <div
+                      key={i}
+                      className="border-b border-white/5 py-0.5 opacity-80"
+                    >
+                      {entry}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
+            </Panel>
+            <ResizeBarH />
+            <Panel defaultSize={20} minSize={12} order={3}>
+              <ScoreCard
+                player={human}
+                victoryScore={state.victoryScore}
+                active={activeIsHuman}
+                facing="self"
+              />
+            </Panel>
+          </PanelGroup>
         </Panel>
       </PanelGroup>
 
@@ -328,13 +387,14 @@ export function GameBoard() {
 }
 
 // ============================================================================
-// Helpers
-// ============================================================================
 
-/** Returns true if the player COULD afford the card by tapping/recycling runes */
 function canPotentiallyAfford(state: GameState, uid: string): boolean {
   if (state.phase !== "main") return false;
-  const card = [...state.players.flatMap((p) => p.hand), state.players[0].championZone, state.players[1].championZone]
+  const card = [
+    ...state.players.flatMap((p) => p.hand),
+    state.players[0].championZone,
+    state.players[1].championZone,
+  ]
     .filter(Boolean)
     .find((c) => (c as CardInstance).uid === uid) as CardInstance | undefined;
   if (!card) return false;
@@ -349,7 +409,6 @@ function canPotentiallyAfford(state: GameState, uid: string): boolean {
   const allMatching = player.base.runes.filter(
     (r) => def.domains.includes(r.domain) || r.domain === "Colorless",
   );
-  // Need at least max(E, P) ready runes (overlap allowed) and P matching runes
   if (allMatching.length < Math.max(0, powerNeed)) return false;
   return ready.length >= Math.max(Math.max(0, energyNeed), Math.max(0, powerNeed));
 }
@@ -366,13 +425,14 @@ function ResizeBarH() {
 }
 
 // ============================================================================
-// Sub-components
+// CharacterPanel — displays Legend + Champion vertically with large artwork.
+// Used both for opponent (top) and player (bottom).
 // ============================================================================
 
-function SidePlayerInfo({
+function CharacterPanel({
   player,
   active,
-  faceDown,
+  facing,
   onPlayChampion,
   championIsPlayable,
   onActivateLegend,
@@ -381,7 +441,7 @@ function SidePlayerInfo({
 }: {
   player: PlayerState;
   active: boolean;
-  faceDown?: boolean;
+  facing: "self" | "opponent";
   onPlayChampion?: (uid: string) => void;
   championIsPlayable?: boolean;
   onActivateLegend?: () => void;
@@ -392,26 +452,223 @@ function SidePlayerInfo({
   return (
     <div
       className={cn(
-        "flex flex-col gap-1 rounded border border-fuchsia-900/40 bg-black/50 p-2",
+        "flex h-full flex-col gap-1 overflow-hidden p-1",
+        active && "ring-1 ring-yellow-400/50",
+      )}
+    >
+      <div className="flex items-center justify-between text-[11px] font-bold">
+        <span className="truncate">{player.name}</span>
+        {facing === "self" && active && (
+          <span className="rounded bg-yellow-600 px-1 text-[9px]">YOUR TURN</span>
+        )}
+      </div>
+
+      <PanelGroup
+        direction="vertical"
+        autoSaveId={`riftarena.left.${facing}.v2`}
+        className="flex-1"
+      >
+        {/* Legend */}
+        <Panel defaultSize={50} minSize={25} order={1}>
+          <div className="flex h-full flex-col gap-0.5">
+            <div className="text-[9px] uppercase tracking-wide opacity-60">
+              Legend
+            </div>
+            <motion.button
+              onContextMenu={(e) => {
+                e.preventDefault();
+                zoom.open(player.legendZone);
+              }}
+              animate={{
+                rotate: player.legendExhausted ? 6 : 0,
+                opacity: player.legendExhausted ? 0.55 : 1,
+              }}
+              transition={{ type: "spring", stiffness: 200, damping: 18 }}
+              className="relative flex-1 overflow-hidden rounded border-2"
+              style={{
+                borderColor: getDomainHex(
+                  (player.legendZone.domains[0] as any) ?? "Colorless",
+                ),
+              }}
+              title="Right-click to zoom"
+            >
+              {player.legendZone.imageUrl && (
+                <Image
+                  src={player.legendZone.imageUrl}
+                  alt={player.legendZone.name}
+                  fill
+                  unoptimized
+                  className="object-cover object-top"
+                />
+              )}
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-1 text-[10px] font-bold leading-tight">
+                {player.legendZone.name}
+              </div>
+              {player.legendExhausted && (
+                <div className="absolute right-0 top-0 rounded-bl bg-zinc-700 px-1 text-[9px] font-bold">
+                  EXHAUSTED
+                </div>
+              )}
+            </motion.button>
+            {facing === "self" && hasActivatedAbility(player.legendZone.id) && (
+              <button
+                onClick={onActivateLegend}
+                disabled={!canActivateLegend}
+                title={legendActivationLabel ?? ""}
+                className={cn(
+                  "shrink-0 rounded px-1 py-0.5 text-[9px] font-bold",
+                  canActivateLegend
+                    ? "bg-yellow-600 hover:bg-yellow-500"
+                    : "bg-zinc-800 opacity-50",
+                )}
+              >
+                {legendActivationLabel
+                  ? `Activate — ${legendActivationLabel}`
+                  : "Activate"}
+              </button>
+            )}
+          </div>
+        </Panel>
+        <ResizeBarH />
+        {/* Champion */}
+        <Panel defaultSize={50} minSize={25} order={2}>
+          <div className="flex h-full flex-col gap-0.5">
+            <div className="text-[9px] uppercase tracking-wide opacity-60">
+              Champion
+            </div>
+            {player.championZone ? (
+              <motion.button
+                onClick={() =>
+                  facing === "self" &&
+                  onPlayChampion &&
+                  onPlayChampion(player.championZone!.uid)
+                }
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  const def = CARDS_BY_ID[player.championZone!.defId];
+                  if (def) zoom.open(def);
+                }}
+                whileHover={{ scale: 1.02 }}
+                className={cn(
+                  "relative flex-1 overflow-hidden rounded border-2",
+                  championIsPlayable && facing === "self"
+                    ? "border-emerald-400"
+                    : "border-fuchsia-900",
+                )}
+                title="Right-click to zoom · click to play"
+              >
+                {(() => {
+                  const def = CARDS_BY_ID[player.championZone!.defId];
+                  return def?.imageUrl ? (
+                    <Image
+                      src={def.imageUrl}
+                      alt={def.name}
+                      fill
+                      unoptimized
+                      className="object-cover object-top"
+                    />
+                  ) : null;
+                })()}
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-1 text-[10px] font-bold leading-tight">
+                  {CARDS_BY_ID[player.championZone.defId]?.name}
+                </div>
+                {championIsPlayable && facing === "self" && (
+                  <div className="absolute right-0 top-0 rounded-bl bg-emerald-500 px-1 text-[9px] font-bold">
+                    PLAY
+                  </div>
+                )}
+              </motion.button>
+            ) : (
+              <div className="flex flex-1 items-center justify-center rounded border border-dashed border-fuchsia-900/40 text-[10px] opacity-40">
+                — already played —
+              </div>
+            )}
+          </div>
+        </Panel>
+      </PanelGroup>
+    </div>
+  );
+}
+
+// ============================================================================
+// ScoreCard — prominent points + resources for one player
+// ============================================================================
+
+function ScoreCard({
+  player,
+  victoryScore,
+  active,
+  facing,
+}: {
+  player: PlayerState;
+  victoryScore: number;
+  active: boolean;
+  facing: "self" | "opponent";
+}) {
+  const accent = facing === "self" ? "emerald" : "rose";
+  return (
+    <div
+      className={cn(
+        "flex h-full flex-col rounded border-2 p-2",
+        facing === "self"
+          ? "border-emerald-700/50 bg-emerald-950/20"
+          : "border-rose-700/50 bg-rose-950/20",
         active && "ring-2 ring-yellow-400/60",
       )}
     >
-      <div className="flex items-center gap-1 text-xs font-bold">
-        <Crown className="h-3 w-3 text-yellow-300" />
-        {player.name}
+      <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wide opacity-80">
+        <span>{player.name}</span>
+        {active && (
+          <span className="rounded bg-yellow-600 px-1.5 text-[9px]">
+            ACTIVE
+          </span>
+        )}
       </div>
-      <div className="flex items-center gap-1 text-xs text-yellow-300">
-        <Trophy className="h-3 w-3" />
-        <span className="font-bold">{player.points}</span>
-        <span className="opacity-60">pts</span>
+
+      {/* Big point counter */}
+      <div className="mt-1 flex items-baseline gap-1">
+        <Trophy
+          className={cn(
+            "h-6 w-6",
+            facing === "self" ? "text-emerald-300" : "text-rose-300",
+          )}
+        />
+        <span
+          className={cn(
+            "font-black leading-none",
+            facing === "self" ? "text-emerald-200" : "text-rose-200",
+          )}
+          style={{ fontSize: "2.5rem" }}
+        >
+          {player.points}
+        </span>
+        <span className="text-sm opacity-60">/{victoryScore}</span>
       </div>
-      {!faceDown && (
+
+      {/* Progress bar to victory */}
+      <div className="mt-1 h-1.5 w-full overflow-hidden rounded bg-black/50">
+        <div
+          className={cn(
+            "h-full transition-all",
+            facing === "self" ? "bg-emerald-500" : "bg-rose-500",
+          )}
+          style={{
+            width: `${Math.min(100, (player.points / victoryScore) * 100)}%`,
+          }}
+        />
+      </div>
+
+      {/* Resources */}
+      {facing === "self" && (
         <>
-          <div className="flex items-center gap-1 text-xs text-cyan-200">
-            <EnergyIcon size={12} />
-            <span className="font-bold">{player.pool.energy}</span>
+          <div className="mt-2 flex items-center gap-1 text-xs">
+            <EnergyIcon size={14} />
+            <span className="font-bold text-cyan-200">
+              {player.pool.energy}
+            </span>
+            <span className="opacity-50">energy</span>
           </div>
-          <div className="flex flex-wrap gap-0.5">
+          <div className="mt-1 flex flex-wrap gap-0.5">
             {Object.entries(player.pool.power).map(
               ([d, n]) =>
                 n > 0 && (
@@ -419,7 +676,7 @@ function SidePlayerInfo({
                     key={d}
                     className="flex items-center gap-0.5 rounded bg-black/60 px-1 text-[10px]"
                   >
-                    <DomainIcon domain={d as any} size={10} />
+                    <DomainIcon domain={d as any} size={11} />
                     <span className="font-bold">{n}</span>
                   </span>
                 ),
@@ -427,7 +684,9 @@ function SidePlayerInfo({
           </div>
         </>
       )}
-      <div className="flex items-center gap-1 text-[10px] opacity-70">
+
+      {/* Counters */}
+      <div className="mt-2 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] opacity-70">
         <span title="Hand">
           <Layers className="inline h-3 w-3" /> {player.hand.length}
         </span>
@@ -437,99 +696,13 @@ function SidePlayerInfo({
           <Trash2 className="inline h-3 w-3" /> {player.trash.length}
         </span>
       </div>
-
-      {/* Legend */}
-      <div className="mt-1">
-        <div className="text-[9px] uppercase tracking-wide opacity-60">
-          Legend
-        </div>
-        <motion.button
-          onContextMenu={(e) => {
-            e.preventDefault();
-            zoom.open(player.legendZone);
-          }}
-          animate={{
-            rotate: player.legendExhausted ? 8 : 0,
-            opacity: player.legendExhausted ? 0.55 : 1,
-          }}
-          transition={{ type: "spring", stiffness: 200, damping: 18 }}
-          className="relative h-24 w-full overflow-hidden rounded border-2"
-          style={{
-            borderColor: getDomainHex(
-              (player.legendZone.domains[0] as any) ?? "Colorless",
-            ),
-          }}
-          title="Right-click to zoom"
-        >
-          {player.legendZone.imageUrl && (
-            <Image
-              src={player.legendZone.imageUrl}
-              alt={player.legendZone.name}
-              fill
-              unoptimized
-              className="object-cover object-top"
-            />
-          )}
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 to-transparent p-0.5 text-[9px] font-bold leading-tight">
-            {player.legendZone.name}
-          </div>
-          {player.legendExhausted && (
-            <div className="absolute right-0 top-0 rounded-bl bg-zinc-700 px-1 text-[8px] font-bold">
-              EXHAUSTED
-            </div>
-          )}
-        </motion.button>
-        {!faceDown && hasActivatedAbility(player.legendZone.id) && (
-          <button
-            onClick={onActivateLegend}
-            disabled={!canActivateLegend}
-            title={legendActivationLabel ?? ""}
-            className={cn(
-              "mt-1 w-full rounded px-1 py-0.5 text-[9px] font-bold",
-              canActivateLegend
-                ? "bg-yellow-600 hover:bg-yellow-500"
-                : "bg-zinc-800 opacity-50",
-            )}
-          >
-            Activate{legendActivationLabel ? ` — ${legendActivationLabel}` : ""}
-          </button>
-        )}
-        {!faceDown &&
-          !hasActivatedAbility(player.legendZone.id) &&
-          (player.legendZone.rulesText ?? "").trim().length > 0 && (
-            <div className="mt-1 rounded bg-yellow-900/30 px-1 py-0.5 text-[9px] italic opacity-70">
-              passive only
-            </div>
-          )}
-      </div>
-
-      {/* Champion */}
-      <div>
-        <div className="text-[9px] uppercase tracking-wide opacity-60">
-          Champion
-        </div>
-        {player.championZone ? (
-          <div className="relative">
-            <GameCard
-              card={player.championZone}
-              size="sm"
-              onClick={() =>
-                onPlayChampion && onPlayChampion(player.championZone!.uid)
-              }
-            />
-            {championIsPlayable && (
-              <div className="absolute -top-1 right-0 rounded bg-emerald-500 px-1 text-[9px] font-bold">
-                PLAY
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="text-[10px] opacity-40">— played —</div>
-        )}
-      </div>
     </div>
   );
 }
+
+// ============================================================================
+// Units row
+// ============================================================================
 
 function UnitsRow({
   units,
@@ -552,12 +725,12 @@ function UnitsRow({
     <div
       onClick={onZoneClick}
       className={cn(
-        "min-h-[5.5rem] w-full rounded border border-fuchsia-900/30 bg-black/30 px-2 py-1",
+        "flex h-full w-full flex-col rounded border border-fuchsia-900/30 bg-black/30 px-2 py-1",
         highlightOnSelection && "ring-2 ring-yellow-400 cursor-pointer",
       )}
     >
       <div className="text-[9px] uppercase opacity-50">{label}</div>
-      <div className="mt-0.5 flex flex-wrap items-center gap-1">
+      <div className="mt-0.5 flex flex-1 flex-wrap items-start gap-1 overflow-y-auto">
         {units.length === 0 && (
           <span className="text-[10px] opacity-30">empty</span>
         )}
@@ -580,6 +753,10 @@ function UnitsRow({
     </div>
   );
 }
+
+// ============================================================================
+// Rune row
+// ============================================================================
 
 function RuneRow({
   runes,
@@ -608,9 +785,9 @@ function RuneRow({
 }) {
   const isFaceDown = !onTap;
   return (
-    <div className="flex w-full flex-col items-center rounded border border-fuchsia-900/30 bg-black/30 px-2 py-1">
-      <div className="self-start text-[9px] uppercase opacity-50">{label}</div>
-      <div className="mt-0.5 flex min-h-[3rem] flex-wrap items-center justify-center gap-2">
+    <div className="flex h-full flex-col">
+      <div className="text-[9px] uppercase opacity-50">{label}</div>
+      <div className="mt-0.5 flex flex-1 flex-wrap content-start items-start justify-start gap-2 overflow-y-auto">
         {runes.length === 0 && (
           <span className="text-[10px] opacity-30">no runes</span>
         )}
@@ -675,7 +852,6 @@ function RuneChip({
   const def = CARDS_BY_ID[rune.defId];
   const px = size === "lg" ? 64 : 48;
   const handleMainClick = () => {
-    // If a pending recycle is required and this rune satisfies, recycle it.
     if (pendingRecycle && onPendingRecycle) {
       onPendingRecycle();
       return;
@@ -700,11 +876,7 @@ function RuneChip({
     <motion.div
       layout
       initial={{ scale: 0, opacity: 0 }}
-      animate={{
-        scale: 1,
-        opacity: 1,
-        // Pulse when valid pending target
-      }}
+      animate={{ scale: 1, opacity: 1 }}
       exit={{
         x: -40,
         opacity: 0,
@@ -779,6 +951,10 @@ function RuneChip({
   );
 }
 
+// ============================================================================
+// Battlefield view
+// ============================================================================
+
 function BattlefieldView({
   state,
   bfUid,
@@ -818,7 +994,7 @@ function BattlefieldView({
         if (def) zoom.open(def);
       }}
       className={cn(
-        "group flex w-96 cursor-pointer flex-col rounded-xl border-4 bg-black/60 text-left overflow-hidden transition",
+        "group flex h-full max-h-full w-96 cursor-pointer flex-col rounded-xl border-4 bg-black/60 text-left overflow-hidden transition",
         bf.contested
           ? "border-red-500"
           : bf.controllerId === "p1"
@@ -829,7 +1005,7 @@ function BattlefieldView({
         canMoveHere && "ring-4 ring-yellow-400 scale-[1.02]",
       )}
     >
-      <div className="flex items-center justify-between bg-black/80 px-2 py-1 text-xs">
+      <div className="flex shrink-0 items-center justify-between bg-black/80 px-2 py-1 text-xs">
         <span className="font-bold drop-shadow">{def?.name}</span>
         <span
           className={cn(
@@ -844,7 +1020,7 @@ function BattlefieldView({
           {bf.contested ? "CONTESTED" : controllerName}
         </span>
       </div>
-      <div className="min-h-[6rem] bg-rose-950/50 p-1.5">
+      <div className="flex-1 overflow-y-auto bg-rose-950/50 p-1.5">
         <div className="text-[9px] uppercase opacity-70">AI here</div>
         <div className="mt-0.5 flex flex-wrap gap-1">
           {aiUnits.map((u) => (
@@ -855,7 +1031,7 @@ function BattlefieldView({
           )}
         </div>
       </div>
-      <div className="relative h-24 w-full overflow-hidden">
+      <div className="relative h-20 w-full shrink-0 overflow-hidden">
         {def?.imageUrl && (
           <Image
             src={def.imageUrl}
@@ -871,7 +1047,7 @@ function BattlefieldView({
           {def?.name?.toUpperCase()}
         </div>
       </div>
-      <div className="min-h-[6rem] bg-emerald-950/50 p-1.5">
+      <div className="flex-1 overflow-y-auto bg-emerald-950/50 p-1.5">
         <div className="text-[9px] uppercase opacity-70">You here</div>
         <div className="mt-0.5 flex flex-wrap gap-1">
           {humanUnits.map((u) => (
