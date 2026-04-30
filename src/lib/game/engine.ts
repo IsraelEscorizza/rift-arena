@@ -321,13 +321,10 @@ export function enterPhase(state: GameState, phase: GameState["phase"]) {
       break;
     }
     case "draw":
-      // First-turn first-player skips draw
-      if (state.turnNumber === 1 && active.id === "p1") {
-        log(state, `${active.name}: Draw Phase (skipped on first turn).`);
-      } else {
-        drawCards(state, active.id, 1);
-        log(state, `${active.name}: Draw Phase.`);
-      }
+      // Per official rules, only 3+ player modes skip first draw for the going-first player.
+      // In 1v1 (Duel/Match) the first player draws normally on turn 1.
+      drawCards(state, active.id, 1);
+      log(state, `${active.name}: Draw Phase.`);
       // End of Draw Phase: empty rune pools (per rule 313)
       for (const p of state.players) p.pool = emptyPool();
       enterPhase(state, "main");
@@ -964,39 +961,42 @@ export function attemptPlayCard(state: GameState, uid: string): GameState {
     return playCard(state, uid);
   }
 
-  // Plan rune usage. We need (energyNeed) taps + (powerNeed) recycles.
+  // Cost model: a single rune can contribute BOTH energy (by tap) and power
+  // (by recycle of the now-exhausted rune). So min runes needed = max(E, P).
+  // Power-providers must be matching domain (or Colorless).
   const ready = player.base.runes.filter((r) => !r.exhausted);
   const cardDomains = def.domains;
-  const matching = ready.filter(
+  const allMatchingInBase = player.base.runes.filter(
     (r) => cardDomains.includes(r.domain) || r.domain === "Colorless",
   );
+  const totalRunesNeeded = Math.max(energyNeed, powerNeed);
 
-  // Reserve `powerNeed` matching runes for recycling
-  const reservedForPower = matching.slice(0, Math.max(0, powerNeed));
-  if (reservedForPower.length < Math.max(0, powerNeed)) {
-    log(state, `Cannot play ${def.name}: not enough matching runes for power.`);
+  if (ready.length < totalRunesNeeded) {
+    log(
+      state,
+      `Cannot play ${def.name}: need ${totalRunesNeeded} ready runes, only ${ready.length}.`,
+    );
+    return state;
+  }
+  if (allMatchingInBase.length < powerNeed) {
+    log(
+      state,
+      `Cannot play ${def.name}: not enough matching runes for ${powerNeed} power.`,
+    );
     return state;
   }
 
-  // The rest are tap candidates (preferring non-matching first to preserve flexibility)
-  const tapCandidates = ready.filter(
-    (r) => !reservedForPower.find((p) => p.uid === r.uid),
-  );
-  // Sort: non-matching first, then matching
-  tapCandidates.sort((a, b) => {
-    const aMatch = cardDomains.includes(a.domain) || a.domain === "Colorless";
-    const bMatch = cardDomains.includes(b.domain) || b.domain === "Colorless";
-    return Number(aMatch) - Number(bMatch);
+  // Tap energyNeed runes. Prefer non-matching first so matching runes stay
+  // ready for explicit recycling. (Both work mechanically thanks to the new
+  // overlap rule, but this makes the UI less surprising.)
+  const tapPool = [...ready];
+  tapPool.sort((a, b) => {
+    const aM = cardDomains.includes(a.domain) || a.domain === "Colorless" ? 1 : 0;
+    const bM = cardDomains.includes(b.domain) || b.domain === "Colorless" ? 1 : 0;
+    return aM - bM;
   });
-
-  if (tapCandidates.length < Math.max(0, energyNeed)) {
-    log(state, `Cannot play ${def.name}: not enough runes for energy.`);
-    return state;
-  }
-
-  // Auto-tap energy
   for (let i = 0; i < energyNeed; i++) {
-    const r = tapCandidates[i];
+    const r = tapPool[i];
     r.exhausted = true;
     player.pool.energy += 1;
   }
@@ -1011,7 +1011,6 @@ export function attemptPlayCard(state: GameState, uid: string): GameState {
     return playCard(state, uid);
   }
 
-  // Need user input for power — set pendingPlay
   state.pendingPlay = {
     cardUid: uid,
     powerLeft: powerNeed,
@@ -1032,7 +1031,10 @@ export function isValidRecycleForPending(
   if (!pending) return false;
   const r = findRune(state, runeUid);
   if (!r) return false;
-  if (r.exhausted) return false;
+  // Exhausted runes ARE valid for recycle — recycling sends them to the deck
+  // regardless of tap state. This lets a single rune contribute both 1 energy
+  // (from tap) AND 1 power (from recycle), e.g. paying 2E + 1 Mind power
+  // with 2 Mind runes (tap both for energy, recycle one for power).
   if (r.zone !== "base") return false;
   if (r.ownerId !== state.turnPlayerId) return false;
   if (

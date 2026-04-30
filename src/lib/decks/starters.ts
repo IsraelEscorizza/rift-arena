@@ -3,29 +3,37 @@ import type { DeckList } from "@/lib/game/types";
 
 export const STARTER_DECKS: DeckList[] = [
   {
-    "id": "starter-fury",
-    "name": "Fury Strike (Starter)",
-    "legendId": "69bc5bd7d308c64675ca87fa",
-    "chosenChampionId": "69bc5bcfd308c64675ca8763",
+    "id": "starter-volibear",
+    "name": "Volibear — Relentless Storm",
+    "legendId": "69bc5bd4d308c64675ca87ca",
+    "chosenChampionId": "69bc5bcfd308c64675ca8762",
     "mainDeck": [
       {
-        "defId": "69bc5bcfd308c64675ca8763",
+        "defId": "69bc5bcfd308c64675ca8762",
         "quantity": 3
       },
       {
-        "defId": "69bc5bd8d308c64675ca8813",
+        "defId": "69bc5bcfd308c64675ca8769",
         "quantity": 3
       },
       {
-        "defId": "69bc5bd8d308c64675ca8812",
+        "defId": "69bc5bc8d308c64675ca86e1",
         "quantity": 3
       },
       {
-        "defId": "69bc5bd8d308c64675ca8814",
+        "defId": "69bc5be4d308c64675ca88f7",
         "quantity": 3
       },
       {
-        "defId": "69bc5bd8d308c64675ca8815",
+        "defId": "69bc5be4d308c64675ca88f2",
+        "quantity": 3
+      },
+      {
+        "defId": "69bc5be4d308c64675ca88f0",
+        "quantity": 3
+      },
+      {
+        "defId": "69bc5be2d308c64675ca88cc",
         "quantity": 3
       },
       {
@@ -33,35 +41,27 @@ export const STARTER_DECKS: DeckList[] = [
         "quantity": 3
       },
       {
-        "defId": "69bc5be9d308c64675ca895b",
+        "defId": "69c8378d2c3db56eb7d760cb",
         "quantity": 3
       },
       {
-        "defId": "69bc5becd308c64675ca8993",
+        "defId": "69c5be69bf82ff7cb69f428a",
         "quantity": 3
       },
       {
-        "defId": "69bc5bead308c64675ca8962",
+        "defId": "69c5be6abf82ff7cb69f4294",
         "quantity": 3
       },
       {
-        "defId": "69bc5befd308c64675ca89c5",
+        "defId": "69bc5bf3d308c64675ca8a0d",
         "quantity": 3
       },
       {
-        "defId": "69bc5beed308c64675ca89b8",
+        "defId": "69bff35758d0fbca04e9372f",
         "quantity": 3
       },
       {
-        "defId": "69bc5beed308c64675ca89b5",
-        "quantity": 3
-      },
-      {
-        "defId": "69bc5bdfd308c64675ca8891",
-        "quantity": 3
-      },
-      {
-        "defId": "69bc5bdfd308c64675ca888b",
+        "defId": "69bc5bcfd308c64675ca8760",
         "quantity": 1
       }
     ],
@@ -82,75 +82,75 @@ export const STARTER_DECKS: DeckList[] = [
     ]
   },
   {
-    "id": "starter-mind",
-    "name": "Mind & Calm (Starter)",
-    "legendId": "69bc5bebd308c64675ca8981",
-    "chosenChampionId": "69bc5bedd308c64675ca899b",
+    "id": "starter-lillia",
+    "name": "Lillia — Bashful Bloom",
+    "legendId": "69bc5be9d308c64675ca894e",
+    "chosenChampionId": "69bc5bedd308c64675ca8998",
     "mainDeck": [
       {
-        "defId": "69bc5bedd308c64675ca899b",
+        "defId": "69bc5bedd308c64675ca8998",
         "quantity": 3
       },
       {
-        "defId": "69bc5bd8d308c64675ca8813",
+        "defId": "69bc5bcdd308c64675ca8739",
         "quantity": 3
       },
       {
-        "defId": "69bc5bd8d308c64675ca8812",
+        "defId": "69bc5bcbd308c64675ca8710",
         "quantity": 3
       },
       {
-        "defId": "69bc5bd8d308c64675ca8814",
+        "defId": "69bc5be0d308c64675ca88a5",
         "quantity": 3
       },
       {
-        "defId": "69bc5bd8d308c64675ca8815",
+        "defId": "69bc5be0d308c64675ca88a7",
         "quantity": 3
       },
       {
-        "defId": "69bc5be9d308c64675ca8953",
+        "defId": "69bc5bdad308c64675ca8835",
         "quantity": 3
       },
       {
-        "defId": "69bc5beed308c64675ca89b7",
+        "defId": "69bc5be6d308c64675ca891a",
         "quantity": 3
       },
       {
-        "defId": "69bc5beed308c64675ca89b6",
+        "defId": "69bc5be6d308c64675ca8921",
         "quantity": 3
       },
       {
-        "defId": "69bc5bedd308c64675ca8999",
+        "defId": "69bc5bf3d308c64675ca8a15",
         "quantity": 3
       },
       {
-        "defId": "69bc5be2d308c64675ca88d2",
+        "defId": "69bc5bf3d308c64675ca8a11",
         "quantity": 3
       },
       {
-        "defId": "69bc5be2d308c64675ca88d1",
+        "defId": "69bff35658d0fbca04e9372c",
         "quantity": 3
       },
       {
-        "defId": "69bc5be8d308c64675ca8949",
+        "defId": "69bff35658d0fbca04e9371e",
         "quantity": 3
       },
       {
-        "defId": "69bc5be6d308c64675ca8922",
+        "defId": "69bd162140ff39fe1396df8a",
         "quantity": 3
       },
       {
-        "defId": "69c43cd2c2f7428c5d24b4e2",
+        "defId": "69bc5bc9d308c64675ca86e6",
         "quantity": 1
       }
     ],
     "runeDeck": [
       {
-        "defId": "69bc5bcbd308c64675ca8718",
+        "defId": "69bc5bc9d308c64675ca86e4",
         "quantity": 7
       },
       {
-        "defId": "69bc5bc9d308c64675ca86e4",
+        "defId": "69bc5bcbd308c64675ca8718",
         "quantity": 5
       }
     ],

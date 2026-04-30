@@ -346,11 +346,12 @@ function canPotentiallyAfford(state: GameState, uid: string): boolean {
   const powerNeed = (def.power ?? 0) - totalPower;
   if (energyNeed <= 0 && powerNeed <= 0) return true;
   const ready = player.base.runes.filter((r) => !r.exhausted);
-  const matching = ready.filter(
+  const allMatching = player.base.runes.filter(
     (r) => def.domains.includes(r.domain) || r.domain === "Colorless",
   );
-  if (matching.length < Math.max(0, powerNeed)) return false;
-  return ready.length >= Math.max(0, energyNeed) + Math.max(0, powerNeed);
+  // Need at least max(E, P) ready runes (overlap allowed) and P matching runes
+  if (allMatching.length < Math.max(0, powerNeed)) return false;
+  return ready.length >= Math.max(Math.max(0, energyNeed), Math.max(0, powerNeed));
 }
 
 function ResizeBar() {
@@ -762,11 +763,11 @@ function RuneChip({
       </motion.button>
       <motion.button
         onClick={onRecycle}
-        disabled={disabled || rune.exhausted}
+        disabled={disabled}
         whileHover={{ scale: 1.15 }}
         whileTap={{ scale: 0.85, rotate: 360 }}
         transition={{ duration: 0.4 }}
-        title="Recycle for 1 power of this domain"
+        title="Recycle for 1 power of this domain (works on tapped runes too)"
         className={cn(
           "absolute -bottom-1 -right-1 flex items-center justify-center rounded-full bg-fuchsia-700 font-bold ring-1 ring-black hover:bg-fuchsia-500 disabled:opacity-30",
           size === "lg" ? "h-6 w-6 text-[11px]" : "h-5 w-5 text-[9px]",

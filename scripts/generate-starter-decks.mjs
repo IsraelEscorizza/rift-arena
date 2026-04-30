@@ -1,4 +1,4 @@
-// Generate two starter decks from the real card pool, picking only MVP-playable cards.
+// Generate two starter decks from the real card pool.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -6,133 +6,130 @@ const all = JSON.parse(
   fs.readFileSync(path.resolve("src/lib/cards/data/all-cards.json"), "utf8"),
 );
 
-function detectKeywords(text) {
-  if (!text) return [];
-  const kw = [];
-  for (const k of [
-    "Tank","Backline","Action","Reaction","Ambush","Ganking","Hidden",
-    "Quick-Draw","Temporary","Unique","Vision","Weaponmaster","Accelerate"
-  ]) {
-    if (new RegExp(`\\[${k}\\]`, "i").test(text)) kw.push(k);
-  }
-  return kw;
-}
-function detectNum(text, kw) {
-  if (!text) return 0;
-  const m = text.match(new RegExp(`\\[${kw}\\s+(\\d+)\\]`, "i"));
-  return m ? parseInt(m[1], 10) : 0;
-}
-function isPlayable(c) {
-  // Tokens are not deck-buildable
+function notTokenOrAlt(c) {
   if (c.classification.supertype === "Token") return false;
-  const text = c.text?.rich ?? c.text?.plain ?? "";
-  const kw = detectKeywords(text);
-  const stripped = text
-    .replace(/<[^>]+>/g, "")
-    .replace(/\[[A-Za-z\- ]+\d*\]/g, "")
-    .replace(/\s+/g, "")
-    .trim();
-  const isVanilla = stripped.length === 0;
-  if (c.classification.type === "Unit") {
-    return isVanilla || detectNum(text, "Assault") > 0 || detectNum(text, "Shield") > 0;
-  }
-  if (c.classification.type === "Battlefield") return true;
-  if (c.classification.type === "Rune") return c.classification.rarity === "Common";
-  if (c.classification.type === "Legend") return isVanilla;
-  return false;
+  if (c.metadata?.alternate_art) return false;
+  if (c.metadata?.signature) return false;
+  if ((c.name ?? "").includes("Overnumbered")) return false;
+  if ((c.name ?? "").includes("(Metal)")) return false;
+  if ((c.name ?? "").includes("(Starter)")) return false;
+  return true;
 }
 
-function buildDeck(deckName, primaryDomain, secondaryDomain) {
-  // Pick any legend matching the domains (abilities may not all be implemented but legend sits in zone)
-  const legends = all.filter(
+/** Get the character name from a card with subtitle, e.g. "Volibear - Relentless Storm" → "Volibear". */
+function characterOf(card) {
+  const name = card.name ?? "";
+  const idx = name.indexOf(" - ");
+  return idx > 0 ? name.slice(0, idx).trim() : name.trim();
+}
+
+function buildDeck(deckName, primaryDomain, secondaryDomain, preferredCharacter) {
+  // Pick a legend matching the domains (and optionally a specific character)
+  const legendCandidates = all.filter(
     (c) =>
       c.classification.type === "Legend" &&
-      !c.metadata?.alternate_art &&
+      notTokenOrAlt(c) &&
       c.classification.domain.includes(primaryDomain) &&
       c.classification.domain.every((d) =>
         [primaryDomain, secondaryDomain, "Colorless"].includes(d),
       ),
   );
-  const legend = legends[0];
+
+  let legend = preferredCharacter
+    ? legendCandidates.find((c) => characterOf(c) === preferredCharacter)
+    : null;
+  if (!legend) legend = legendCandidates[0];
   if (!legend) throw new Error(`No legend for ${primaryDomain}`);
 
-  // Chosen Champion: any unit with same tag as legend
-  const legendTag = legend.tags?.[0];
-  let chosenChampion =
-    all.find(
+  const character = characterOf(legend);
+
+  // Chosen Champion MUST be a Champion unit of the same character.
+  // Look for: Champion-supertype units whose character (name prefix) matches.
+  let chosenChampion = all.find(
+    (c) =>
+      c.classification.type === "Unit" &&
+      c.classification.supertype === "Champion" &&
+      notTokenOrAlt(c) &&
+      characterOf(c) === character,
+  );
+  // Secondary check: champion with `character` in tags
+  if (!chosenChampion) {
+    chosenChampion = all.find(
       (c) =>
         c.classification.type === "Unit" &&
         c.classification.supertype === "Champion" &&
-        (c.tags ?? []).includes(legendTag) &&
-        isPlayable(c),
-    ) ?? all.find(
-      (c) =>
-        c.classification.type === "Unit" &&
-        c.classification.domain.includes(primaryDomain) &&
-        isPlayable(c),
+        notTokenOrAlt(c) &&
+        (c.tags ?? []).includes(character),
     );
-  if (!chosenChampion) throw new Error(`No champion for ${primaryDomain}`);
+  }
+  if (!chosenChampion) {
+    throw new Error(
+      `No matching champion unit found for legend ${legend.name} (character "${character}").`,
+    );
+  }
 
-  // Pick units of these domains. We allow non-vanilla — abilities just won't all fire.
-  // Stats still work fine.
-  const units = all
+  // Build main deck pool: 40 cards. Filter:
+  //  - Type Unit / Spell / Gear (Riftbound deck contents)
+  //  - NOT tokens / alt art / signatures / overnumbered
+  //  - All domains contained in deck identity
+  //  - Not the chosen champion itself (we add 3 copies separately)
+  const allowedDomains = [primaryDomain, secondaryDomain, "Colorless"];
+  const pool = all
     .filter(
       (c) =>
-        c.classification.type === "Unit" &&
-        !c.metadata?.alternate_art &&
-        !c.metadata?.signature &&
-        c.classification.domain.every((d) =>
-          [primaryDomain, secondaryDomain, "Colorless"].includes(d),
-        ) &&
+        ["Unit", "Spell", "Gear"].includes(c.classification.type) &&
+        notTokenOrAlt(c) &&
+        c.classification.domain.length > 0 &&
+        c.classification.domain.every((d) => allowedDomains.includes(d)) &&
         c.id !== chosenChampion.id,
     )
-    .sort((a, b) => (a.attributes.energy ?? 0) - (b.attributes.energy ?? 0));
+    .sort((a, b) => (a.attributes.energy ?? 99) - (b.attributes.energy ?? 99));
 
-  // Build mainDeck: 40 cards, target curve: low/mid/high
   const mainDeck = [];
-  let totalCards = 0;
-  // Add chosen champion x3 (max copies)
+  let total = 0;
+  // 3 copies of chosen champion
   mainDeck.push({ defId: chosenChampion.id, quantity: 3 });
-  totalCards += 3;
-  for (const u of units) {
-    if (totalCards >= 40) break;
-    const qty = Math.min(3, 40 - totalCards);
+  total += 3;
+  // Then fill with pool
+  for (const u of pool) {
+    if (total >= 40) break;
+    const qty = Math.min(3, 40 - total);
     mainDeck.push({ defId: u.id, quantity: qty });
-    totalCards += qty;
+    total += qty;
   }
+  if (total < 40)
+    throw new Error(`Could not assemble 40 cards for ${deckName} — only ${total}`);
 
-  // Build runeDeck: 12 runes
-  const basicPrimaryRune = all.find(
-    (c) =>
-      c.classification.type === "Rune" &&
-      c.classification.rarity === "Common" &&
-      c.classification.domain.length === 1 &&
-      c.classification.domain[0] === primaryDomain,
-  );
-  const basicSecondaryRune = all.find(
-    (c) =>
-      c.classification.type === "Rune" &&
-      c.classification.rarity === "Common" &&
-      c.classification.domain.length === 1 &&
-      c.classification.domain[0] === secondaryDomain,
-  );
+  // Rune deck: 12 basic runes split between primary/secondary domain
+  const runeOfDomain = (dom) =>
+    all.find(
+      (c) =>
+        c.classification.type === "Rune" &&
+        c.classification.rarity === "Common" &&
+        c.classification.domain.length === 1 &&
+        c.classification.domain[0] === dom &&
+        notTokenOrAlt(c),
+    );
+  const primaryRune = runeOfDomain(primaryDomain);
+  const secondaryRune = runeOfDomain(secondaryDomain);
   const runeDeck = [];
-  if (basicPrimaryRune) runeDeck.push({ defId: basicPrimaryRune.id, quantity: 7 });
-  if (basicSecondaryRune) runeDeck.push({ defId: basicSecondaryRune.id, quantity: 5 });
-  // Pad if missing
+  if (primaryRune) runeDeck.push({ defId: primaryRune.id, quantity: 7 });
+  if (secondaryRune) runeDeck.push({ defId: secondaryRune.id, quantity: 5 });
   const runeTotal = runeDeck.reduce((s, e) => s + e.quantity, 0);
-  if (runeTotal < 12 && basicPrimaryRune) {
-    runeDeck[0].quantity += 12 - runeTotal;
-  }
+  if (runeTotal < 12 && primaryRune) runeDeck[0].quantity += 12 - runeTotal;
 
-  // Battlefields: pick 3 of any domain
+  // Battlefields: 3, prefer non-Token battlefields
   const battlefields = all
-    .filter((c) => c.classification.type === "Battlefield")
+    .filter(
+      (c) =>
+        c.classification.type === "Battlefield" &&
+        notTokenOrAlt(c),
+    )
     .slice(0, 3)
     .map((c) => c.id);
 
   return {
-    id: `starter-${primaryDomain.toLowerCase()}`,
+    id: `starter-${character.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
     name: deckName,
     legendId: legend.id,
     chosenChampionId: chosenChampion.id,
@@ -140,16 +137,17 @@ function buildDeck(deckName, primaryDomain, secondaryDomain) {
     runeDeck,
     battlefieldIds: battlefields,
     _debug: {
+      character,
       legend: legend.name,
       champion: chosenChampion.name,
-      mainCount: totalCards,
+      mainCount: total,
       runeCount: runeDeck.reduce((s, e) => s + e.quantity, 0),
     },
   };
 }
 
-const deckA = buildDeck("Fury Strike (Starter)", "Fury", "Body");
-const deckB = buildDeck("Mind & Calm (Starter)", "Mind", "Calm");
+const deckA = buildDeck("Volibear — Relentless Storm", "Fury", "Body", "Volibear");
+const deckB = buildDeck("Lillia — Bashful Bloom", "Calm", "Mind", "Lillia");
 
 console.log("Deck A:", deckA._debug);
 console.log("Deck B:", deckB._debug);

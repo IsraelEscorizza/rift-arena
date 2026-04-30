@@ -53,7 +53,7 @@ export function CardZoomProvider({ children }: { children: React.ReactNode }) {
               exit={{ scale: 0.7, opacity: 0 }}
               transition={{ type: "spring", stiffness: 250, damping: 24 }}
               onClick={(e) => e.stopPropagation()}
-              className="relative max-h-[92vh] max-w-[92vw]"
+              className="relative flex max-h-[92vh] w-auto flex-col rounded-lg bg-zinc-950 shadow-2xl ring-1 ring-fuchsia-700"
             >
               <button
                 onClick={close}
@@ -62,16 +62,18 @@ export function CardZoomProvider({ children }: { children: React.ReactNode }) {
                 <X className="h-4 w-4" />
               </button>
               {active.imageUrl && (
-                <Image
-                  src={active.imageUrl}
-                  alt={active.name}
-                  width={600}
-                  height={840}
-                  unoptimized
-                  className="max-h-[88vh] w-auto rounded-lg shadow-2xl"
-                />
+                <div className="flex shrink-0 items-center justify-center overflow-hidden rounded-t-lg">
+                  <Image
+                    src={active.imageUrl}
+                    alt={active.name}
+                    width={600}
+                    height={840}
+                    unoptimized
+                    className="block h-auto max-h-[70vh] w-auto"
+                  />
+                </div>
               )}
-              <div className="absolute inset-x-0 bottom-0 rounded-b-lg bg-black/85 p-3 text-white">
+              <div className="overflow-y-auto rounded-b-lg bg-black p-3 text-white">
                 <div className="text-lg font-bold">{active.name}</div>
                 <div className="text-xs opacity-70">
                   {active.type} • {active.domains.join(" / ")} •{" "}
@@ -82,8 +84,13 @@ export function CardZoomProvider({ children }: { children: React.ReactNode }) {
                   {active.might != null && `• ${active.might} Might`}
                 </div>
                 {active.rulesText && (
-                  <div className="mt-1 whitespace-pre-line text-xs opacity-90">
+                  <div className="mt-2 whitespace-pre-line text-sm leading-snug opacity-90">
                     {active.rulesText}
+                  </div>
+                )}
+                {active.flavor && (
+                  <div className="mt-2 whitespace-pre-line text-xs italic opacity-50">
+                    {active.flavor}
                   </div>
                 )}
               </div>
