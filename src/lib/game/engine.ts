@@ -296,6 +296,8 @@ export function enterPhase(state: GameState, phase: GameState["phase"]) {
           (id) => id !== active.id,
         );
       }
+      // Beginning Step triggers (before scoring)
+      emitTrigger(state, "atBeginningStart", { playerId: active.id });
       // Scoring step: Hold all controlled battlefields
       for (const bf of state.battlefields) {
         if (bf.controllerId === active.id) {
@@ -828,6 +830,25 @@ function runCombatAt(state: GameState, bf: BattlefieldInstance) {
 }
 
 function killDead(state: GameState) {
+  // First, collect dying units so we can fire onDie BEFORE they're moved to trash
+  const dying: { unit: CardInstance; player: PlayerState }[] = [];
+  for (const p of state.players) {
+    for (const u of p.base.units) {
+      const def = CARDS_BY_ID[u.defId];
+      if (u.damage >= (def.might ?? 0) + u.buffCount) {
+        dying.push({ unit: u, player: p });
+      }
+    }
+  }
+  // Fire onDie triggers (Deathknell happens before moving to trash per rules)
+  for (const { unit, player } of dying) {
+    emitTrigger(state, "onDie", {
+      unitUid: unit.uid,
+      controllerId: player.id,
+      battlefieldId: unit.battlefieldId,
+    });
+  }
+  // Now actually move them to trash
   for (const p of state.players) {
     const survivors: CardInstance[] = [];
     for (const u of p.base.units) {
@@ -861,8 +882,10 @@ function score(
   addPoints(state, playerId, 1, false, via);
   if (via === "Hold") {
     emitTrigger(state, "onHoldHere", { bfUid, playerId });
+    emitTrigger(state, "onHoldAny", { bfUid, playerId });
   } else {
     emitTrigger(state, "onConquerHere", { bfUid, playerId });
+    emitTrigger(state, "onConquerAny", { bfUid, playerId });
   }
 }
 

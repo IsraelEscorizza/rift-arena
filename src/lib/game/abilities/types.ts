@@ -3,11 +3,15 @@ import { CardInstance, Domain, GameState } from "../types";
 export type TriggerKind =
   | "onPlayUnit" // a unit enters play under the controller of the legend/champion
   | "onPlayMightyUnit" // unit with Might >= 5
+  | "onConquerAny" // ANY conquer by the legend/unit's controller
+  | "onHoldAny" // ANY hold by the legend/unit's controller
   | "onConquerHere" // unit's owner conquered the BF this unit is at
   | "onHoldHere" // unit's owner holds the BF this unit is at
-  | "onDie" // this unit dies
+  | "onDie" // this unit dies — sourceUid is the dying unit
+  | "onWinCombat" // controller's units win a combat
   | "onAttack" // this unit gets attacker designation
   | "onDefend" // this unit gets defender designation
+  | "atBeginningStart" // start of controller's Beginning Phase
   | "onOpponentMove"; // an opposing unit moves anywhere on the board
 
 export interface TriggerContext {

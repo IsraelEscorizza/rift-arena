@@ -28,11 +28,21 @@ const SPRITE_TOKEN_ID = "69bc5bd8d308c64675ca8815"; // 3-Might Sprite, Temporary
 
 // ---- Card IDs ----
 export const CARD_IDS = {
-  VolibearRS: "69bc5bd4d308c64675ca87ca", // Volibear - Relentless Storm (base)
+  // Round 1
+  VolibearRS: "69bc5bd4d308c64675ca87ca",
   VolibearRS_overnumbered: "69bc5bf0d308c64675ca89d5",
   VolibearImposing: "69bc5bcfd308c64675ca8762",
   LilliaBB: "69bc5be9d308c64675ca894e",
   BlueSentinel: "69bc5bedd308c64675ca899b",
+  // Round 2
+  VexGloomist: "69bc5bead308c64675ca8963",
+  JinxLooseCannon: "69bc5bf0d308c64675ca89d2",
+  GarenMightOfDemacia: "69bc5bf2d308c64675ca8a08",
+  KaiSaSurvivor: "69bc5bc8d308c64675ca86df",
+  QiyanaVictorious: "69bc5bcfd308c64675ca875f",
+  KogMawCaustic: "69bc5bd1d308c64675ca8786",
+  WarwickHunter: "69bc5bcfd308c64675ca8764",
+  YuumiMagicalCat: "69bc5becd308c64675ca8991",
 };
 
 const REGISTRY: Record<string, CardAbilities> = {};
@@ -197,6 +207,187 @@ REGISTRY[CARD_IDS.BlueSentinel] = {
           payload: {},
         });
       },
+    },
+  ],
+};
+
+// ----------------------------------------------------------------------------
+// Vex - Gloomist (Legend, Chaos)
+// "When you or an ally hold, you may exhaust me to draw 1."
+// Auto-fires while ready (1v1 has no ally).
+// ----------------------------------------------------------------------------
+REGISTRY[CARD_IDS.VexGloomist] = {
+  triggers: [
+    {
+      kind: "onHoldAny",
+      predicate: (ctx) => {
+        const p = findPlayer(ctx.state, ctx.controllerId);
+        if (p.legendExhausted) return false;
+        const data = ctx.data ?? {};
+        return data.playerId === ctx.controllerId;
+      },
+      describe: () => "Vex — Gloomist: exhaust me, draw 1.",
+      resolve: (ctx) => {
+        const p = findPlayer(ctx.state, ctx.controllerId);
+        p.legendExhausted = true;
+        drawCardsFor(ctx.state, ctx.controllerId, 1);
+      },
+    },
+  ],
+};
+
+// ----------------------------------------------------------------------------
+// Jinx - Loose Cannon (Legend, Fury)
+// "At start of your Beginning Phase, draw 1 if you have one or fewer cards in your hand."
+// ----------------------------------------------------------------------------
+REGISTRY[CARD_IDS.JinxLooseCannon] = {
+  triggers: [
+    {
+      kind: "atBeginningStart",
+      predicate: (ctx) => {
+        if ((ctx.data?.playerId as string) !== ctx.controllerId) return false;
+        const p = findPlayer(ctx.state, ctx.controllerId);
+        return p.hand.length <= 1;
+      },
+      describe: () =>
+        "Jinx — Loose Cannon: hand low, draw 1.",
+      resolve: (ctx) => drawCardsFor(ctx.state, ctx.controllerId, 1),
+    },
+  ],
+};
+
+// ----------------------------------------------------------------------------
+// Garen - Might of Demacia (Legend, Body/Order)
+// "When you conquer, if you have 4+ units at that battlefield, draw 2."
+// ----------------------------------------------------------------------------
+REGISTRY[CARD_IDS.GarenMightOfDemacia] = {
+  triggers: [
+    {
+      kind: "onConquerAny",
+      predicate: (ctx) => {
+        if ((ctx.data?.playerId as string) !== ctx.controllerId) return false;
+        const bfUid = ctx.data?.bfUid as string | undefined;
+        if (!bfUid) return false;
+        const p = findPlayer(ctx.state, ctx.controllerId);
+        const count = p.base.units.filter((u) => u.battlefieldId === bfUid).length;
+        return count >= 4;
+      },
+      describe: () => "Garen — 4+ units there, draw 2.",
+      resolve: (ctx) => drawCardsFor(ctx.state, ctx.controllerId, 2),
+    },
+  ],
+};
+
+// ----------------------------------------------------------------------------
+// Kai'Sa - Survivor (Champion)
+// "[Accelerate] When I conquer, draw 1."
+// ----------------------------------------------------------------------------
+REGISTRY[CARD_IDS.KaiSaSurvivor] = {
+  triggers: [
+    {
+      kind: "onConquerHere",
+      predicate: (ctx) => {
+        const sourceUid = ctx.sourceUid;
+        if (!sourceUid) return false;
+        const u = findUnitOnBoard(ctx.state, sourceUid);
+        if (!u) return false;
+        const bfUid = ctx.data?.bfUid as string | undefined;
+        return u.battlefieldId === bfUid;
+      },
+      describe: () => "Kai'Sa — Survivor: conquer, draw 1.",
+      resolve: (ctx) => drawCardsFor(ctx.state, ctx.controllerId, 1),
+    },
+  ],
+};
+
+// ----------------------------------------------------------------------------
+// Qiyana - Victorious (Champion)
+// "[Deflect] When I conquer, draw 1 OR channel 1 rune exhausted."
+// MVP: always draw 1.
+// ----------------------------------------------------------------------------
+REGISTRY[CARD_IDS.QiyanaVictorious] = {
+  triggers: [
+    {
+      kind: "onConquerHere",
+      predicate: (ctx) => {
+        const sourceUid = ctx.sourceUid;
+        if (!sourceUid) return false;
+        const u = findUnitOnBoard(ctx.state, sourceUid);
+        if (!u) return false;
+        const bfUid = ctx.data?.bfUid as string | undefined;
+        return u.battlefieldId === bfUid;
+      },
+      describe: () => "Qiyana — Victorious: conquer, draw 1.",
+      resolve: (ctx) => drawCardsFor(ctx.state, ctx.controllerId, 1),
+    },
+  ],
+};
+
+// ----------------------------------------------------------------------------
+// Kog'Maw - Caustic (Champion)
+// "[Deathknell] Deal 4 to all units at my battlefield."
+// ----------------------------------------------------------------------------
+REGISTRY[CARD_IDS.KogMawCaustic] = {
+  triggers: [
+    {
+      kind: "onDie",
+      predicate: (ctx) => ctx.data?.unitUid === ctx.sourceUid,
+      describe: () =>
+        "Kog'Maw — Deathknell: deal 4 to all units at this battlefield.",
+      resolve: (ctx) => {
+        const bfUid = ctx.data?.battlefieldId as string | undefined;
+        if (!bfUid) return;
+        for (const p of ctx.state.players) {
+          for (const u of p.base.units) {
+            if (u.battlefieldId === bfUid) {
+              u.damage += 4;
+            }
+          }
+        }
+        logEvent(ctx.state, "Kog'Maw deals 4 damage to all units at his battlefield.");
+      },
+    },
+  ],
+};
+
+// ----------------------------------------------------------------------------
+// Warwick - Hunter (Champion)
+// "I enter ready. When I attack, kill all damaged enemy units here."
+// MVP: only the "kill damaged enemies on combat" piece (engine simplified).
+// onPlayUnit handler sets enteredReady (we approximate as Accelerate-like).
+// ----------------------------------------------------------------------------
+REGISTRY[CARD_IDS.WarwickHunter] = {
+  triggers: [
+    {
+      kind: "onPlayUnit",
+      predicate: (ctx) => ctx.data?.unitUid === ctx.sourceUid,
+      describe: () => "Warwick — Hunter enters ready.",
+      resolve: (ctx) => {
+        const u = findUnitOnBoard(ctx.state, ctx.sourceUid!);
+        if (u) u.exhausted = false;
+      },
+    },
+    // "When I attack, kill all damaged enemy units here." would require an
+    // onAttack trigger fired during combat — skipped in this MVP since combat
+    // is auto-resolved.
+  ],
+};
+
+// ----------------------------------------------------------------------------
+// Yuumi - Magical Cat (Champion)
+// "When I attack or defend, give one of your other units here +3 Might and Tank this turn."
+// MVP: at start of combat where Yuumi is, the largest other friendly unit gets a buffCount (max 1 in Riftbound rules).
+// We use onPlayUnit + onConquerHere as approximations? Actually the proper way is during combat.
+// For now we leave Yuumi out of the dynamic combat hook — log-only stub.
+// ----------------------------------------------------------------------------
+REGISTRY[CARD_IDS.YuumiMagicalCat] = {
+  triggers: [
+    {
+      kind: "onPlayUnit",
+      predicate: (ctx) => ctx.data?.unitUid === ctx.sourceUid,
+      describe: () =>
+        "Yuumi — Magical Cat enters play. (Combat buff effect is partially implemented.)",
+      resolve: () => {},
     },
   ],
 };
