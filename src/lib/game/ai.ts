@@ -2,10 +2,11 @@
 
 import { CARDS_BY_ID } from "@/lib/cards/database";
 import {
+  attemptPlayCard,
   canPlayCard,
   canStandardMove,
   nextPhase,
-  playCard,
+  recycleForPending,
   recycleRuneForPower,
   standardMove,
   tapRuneForEnergy,
@@ -48,17 +49,34 @@ export function runAITurn(state: GameState): GameState {
       }
     }
 
-    // 3. Try to play any unit we can afford
-    const playable = ai.hand
-      .filter((c) => canPlayCard(s, c.uid))
+    // 3. Try to play a unit using the auto-pay flow.
+    const candidates = ai.hand
       .map((c) => ({ c, def: CARDS_BY_ID[c.defId] }))
       .filter(({ def }) => def.type === "Unit")
       .sort((a, b) => (b.def.energy ?? 0) - (a.def.energy ?? 0));
 
-    if (playable.length > 0) {
-      s = playCard(s, playable[0].c.uid);
-      continue;
+    let played = false;
+    for (const cand of candidates) {
+      const before = s;
+      s = attemptPlayCard(s, cand.c.uid);
+      if (s === before) continue; // unaffordable
+      // If pending power required, auto-recycle valid runes greedily
+      let safety2 = 0;
+      while (s.pendingPlay && safety2++ < 12) {
+        const aiNow = s.players.find((p) => p.id === "p2")!;
+        const valid = aiNow.base.runes.find(
+          (r) =>
+            !r.exhausted &&
+            (s.pendingPlay!.neededDomains.includes(r.domain) ||
+              r.domain === "Colorless"),
+        );
+        if (!valid) break;
+        s = recycleForPending(s, valid.uid);
+      }
+      played = true;
+      break;
     }
+    if (played) continue;
 
     // 4. Move ready units to a battlefield (prefer uncontrolled, else opponent's)
     const readyUnits = ai.base.units.filter((u) => !u.exhausted && !u.battlefieldId);

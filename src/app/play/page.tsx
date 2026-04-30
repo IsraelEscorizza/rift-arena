@@ -225,18 +225,22 @@ function BattlefieldPicker({
           const def = CARDS_BY_ID[bfId];
           if (!def) return null;
           const selected = pick === bfId;
+          // Battlefields are landscape — render at 16:10 aspect
           return (
             <motion.button
               key={bfId}
               onClick={() => setPick(bfId)}
               whileHover={{ y: -6, scale: 1.03 }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+              }}
               animate={{
                 boxShadow: selected
                   ? "0 0 32px 6px rgba(250, 204, 21, 0.6)"
                   : "0 0 0 0 transparent",
               }}
               className={cn(
-                "relative h-72 w-52 overflow-hidden rounded-xl border-2",
+                "relative h-56 w-80 overflow-hidden rounded-xl border-2",
                 selected ? "border-yellow-300" : "border-fuchsia-900/60",
               )}
             >
@@ -249,7 +253,7 @@ function BattlefieldPicker({
                   className="object-cover"
                 />
               )}
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-2 text-left">
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-2 text-left">
                 <div className="font-bold">{def.name}</div>
                 <div className="text-[10px] opacity-70">{def.setLabel}</div>
               </div>

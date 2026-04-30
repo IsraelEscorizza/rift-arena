@@ -152,6 +152,12 @@ export interface PendingTarget {
   description: string;
 }
 
+export interface PendingPlay {
+  cardUid: string;
+  powerLeft: number;
+  neededDomains: Domain[]; // domains that satisfy this card's power
+}
+
 export interface GameState {
   mode: GameMode;
   victoryScore: number;
@@ -172,6 +178,9 @@ export interface GameState {
   log: string[];
   winnerId: string | null;
   pendingMove: { unitUid: string } | null;
+  // When user clicks a card whose Power cost requires recycling runes,
+  // we hold this state until they pick which runes to recycle.
+  pendingPlay: PendingPlay | null;
 }
 
 export interface DeckList {

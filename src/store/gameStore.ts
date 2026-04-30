@@ -2,9 +2,13 @@
 
 import { create } from "zustand";
 import {
+  activateLegend,
+  attemptPlayCard,
+  cancelPendingPlay,
   createGame,
   nextPhase,
   playCard,
+  recycleForPending,
   recycleRuneForPower,
   standardMove,
   standardMoveMultiple,
@@ -25,10 +29,8 @@ interface MatchState {
   p2Deck: DeckList;
   p1Name: string;
   p2Name: string;
-  // Battlefields already used in earlier games of this match
   usedBfP1: string[];
   usedBfP2: string[];
-  // Score
   winsP1: number;
   winsP2: number;
   gameNumber: number;
@@ -48,7 +50,13 @@ interface GameStore {
   beginNextGame: () => void;
   finalizeGame: () => void;
   nextPhase: () => void;
+  /** Direct play (no auto-pay). Used by AI. */
   playCard: (uid: string) => void;
+  /** Smart play with auto-tap energy + prompt recycle for power. */
+  attemptPlayCard: (uid: string) => void;
+  recycleForPending: (runeUid: string) => void;
+  cancelPendingPlay: () => void;
+  activateLegend: () => void;
   tapRune: (uid: string) => void;
   untapRune: (uid: string) => void;
   recycleRune: (uid: string) => void;
@@ -122,11 +130,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const m = get().match;
     if (!m) return;
     set({
-      match: {
-        ...m,
-        gameNumber: m.gameNumber + 1,
-        matchPhase: "picking_bf",
-      },
+      match: { ...m, gameNumber: m.gameNumber + 1, matchPhase: "picking_bf" },
       state: null,
     });
   },
@@ -140,6 +144,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const cur = get().state;
     if (!cur) return;
     set({ state: playCard(clone(cur), uid) });
+  },
+  attemptPlayCard: (uid) => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: attemptPlayCard(clone(cur), uid) });
+  },
+  recycleForPending: (runeUid) => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: recycleForPending(clone(cur), runeUid) });
+  },
+  cancelPendingPlay: () => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: cancelPendingPlay(clone(cur)) });
+  },
+  activateLegend: () => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: activateLegend(clone(cur), cur.turnPlayerId) });
   },
   tapRune: (uid) => {
     const cur = get().state;

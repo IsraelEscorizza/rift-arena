@@ -194,6 +194,7 @@ export function createGame(
     log: [`${p1Name} vs ${p2Name} — game start.`],
     winnerId: null,
     pendingMove: null,
+    pendingPlay: null,
   };
 
   // Run start-of-game phases automatically
@@ -878,6 +879,159 @@ function addPoints(
       log(state, `${p.name} wins!`);
     }
   }
+}
+
+// ---------------- auto-pay (UX convenience) ----------------
+
+/**
+ * Smart attempt to play a card from hand or champion zone.
+ *
+ * Step 1: validate the card exists and the player can theoretically afford it.
+ * Step 2: auto-tap enough ready runes to cover the Energy cost (preferring
+ *   runes whose domain DOESN'T match the card's, so matching runes stay
+ *   available to be recycled for Power).
+ * Step 3: if Power is still short, set state.pendingPlay so the UI can prompt
+ *   the user to pick which runes to recycle.
+ * Step 4: if Power is fully covered, play the card immediately.
+ */
+export function attemptPlayCard(state: GameState, uid: string): GameState {
+  if (state.winnerId) return state;
+  if (state.phase !== "main") return state;
+  if (state.pendingPlay) return state; // already prompting
+
+  const card = findCard(state, uid);
+  if (!card) return state;
+  if (card.zone !== "hand" && card.zone !== "champion_zone") return state;
+  if (card.ownerId !== state.turnPlayerId) return state;
+
+  const def = CARDS_BY_ID[card.defId];
+  const player = getPlayer(state, card.ownerId);
+
+  const energyNeed = (def.energy ?? 0) - player.pool.energy;
+  const totalPower = Object.values(player.pool.power).reduce((a, b) => a + b, 0);
+  const powerNeed = (def.power ?? 0) - totalPower;
+
+  if (energyNeed <= 0 && powerNeed <= 0) {
+    return playCard(state, uid);
+  }
+
+  // Plan rune usage. We need (energyNeed) taps + (powerNeed) recycles.
+  const ready = player.base.runes.filter((r) => !r.exhausted);
+  const cardDomains = def.domains;
+  const matching = ready.filter(
+    (r) => cardDomains.includes(r.domain) || r.domain === "Colorless",
+  );
+
+  // Reserve `powerNeed` matching runes for recycling
+  const reservedForPower = matching.slice(0, Math.max(0, powerNeed));
+  if (reservedForPower.length < Math.max(0, powerNeed)) {
+    log(state, `Cannot play ${def.name}: not enough matching runes for power.`);
+    return state;
+  }
+
+  // The rest are tap candidates (preferring non-matching first to preserve flexibility)
+  const tapCandidates = ready.filter(
+    (r) => !reservedForPower.find((p) => p.uid === r.uid),
+  );
+  // Sort: non-matching first, then matching
+  tapCandidates.sort((a, b) => {
+    const aMatch = cardDomains.includes(a.domain) || a.domain === "Colorless";
+    const bMatch = cardDomains.includes(b.domain) || b.domain === "Colorless";
+    return Number(aMatch) - Number(bMatch);
+  });
+
+  if (tapCandidates.length < Math.max(0, energyNeed)) {
+    log(state, `Cannot play ${def.name}: not enough runes for energy.`);
+    return state;
+  }
+
+  // Auto-tap energy
+  for (let i = 0; i < energyNeed; i++) {
+    const r = tapCandidates[i];
+    r.exhausted = true;
+    player.pool.energy += 1;
+  }
+  if (energyNeed > 0) {
+    log(
+      state,
+      `${player.name} auto-taps ${energyNeed} rune${energyNeed > 1 ? "s" : ""} for energy.`,
+    );
+  }
+
+  if (powerNeed <= 0) {
+    return playCard(state, uid);
+  }
+
+  // Need user input for power — set pendingPlay
+  state.pendingPlay = {
+    cardUid: uid,
+    powerLeft: powerNeed,
+    neededDomains: [...cardDomains],
+  };
+  log(
+    state,
+    `${player.name}: pick ${powerNeed} rune${powerNeed > 1 ? "s" : ""} to recycle for ${def.name}'s power.`,
+  );
+  return state;
+}
+
+export function isValidRecycleForPending(
+  state: GameState,
+  runeUid: string,
+): boolean {
+  const pending = state.pendingPlay;
+  if (!pending) return false;
+  const r = findRune(state, runeUid);
+  if (!r) return false;
+  if (r.exhausted) return false;
+  if (r.zone !== "base") return false;
+  if (r.ownerId !== state.turnPlayerId) return false;
+  if (
+    !pending.neededDomains.includes(r.domain) &&
+    r.domain !== "Colorless"
+  )
+    return false;
+  return true;
+}
+
+export function recycleForPending(
+  state: GameState,
+  runeUid: string,
+): GameState {
+  if (!isValidRecycleForPending(state, runeUid)) return state;
+  // recycleRuneForPower already does the rune→deck and pool credit
+  state = recycleRuneForPower(state, runeUid);
+  if (!state.pendingPlay) return state;
+  state.pendingPlay.powerLeft -= 1;
+  if (state.pendingPlay.powerLeft <= 0) {
+    const cardUid = state.pendingPlay.cardUid;
+    state.pendingPlay = null;
+    state = playCard(state, cardUid);
+  }
+  return state;
+}
+
+export function cancelPendingPlay(state: GameState): GameState {
+  // Note: tapping rune for energy already happened and isn't reversed.
+  // The user can manually untap each refundable rune afterwards.
+  if (state.pendingPlay) {
+    log(state, `Play cancelled.`);
+    state.pendingPlay = null;
+  }
+  return state;
+}
+
+export function activateLegend(state: GameState, playerId: string): GameState {
+  if (state.winnerId) return state;
+  if (state.phase !== "main") return state;
+  if (playerId !== state.turnPlayerId) return state;
+  const p = getPlayer(state, playerId);
+  // Stub — abilities aren't parsed/wired yet. Just log.
+  log(
+    state,
+    `${p.name} activates ${p.legendZone.name} — resolve its ability manually.`,
+  );
+  return state;
 }
 
 // ---------------- public surface ----------------
