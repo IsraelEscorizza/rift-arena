@@ -12,11 +12,14 @@ import {
 } from "@/lib/game/types";
 import { CARDS_BY_ID, getDomainHex } from "@/lib/cards/database";
 import {
+  canActivateLegend,
   canPlayCard,
   canStandardMove,
   canUntapRune,
+  getLegendActivationLabel,
   isValidRecycleForPending,
 } from "@/lib/game/engine";
+import { hasActivatedAbility } from "@/lib/game/abilities/registry";
 import { useGameStore } from "@/store/gameStore";
 import { GameCard } from "./Card";
 import { useCardZoom } from "./CardZoom";
@@ -139,7 +142,8 @@ export function GameBoard() {
                   : false
               }
               onActivateLegend={() => activateLegend()}
-              canActivateLegend={activeIsHuman && state.phase === "main"}
+              canActivateLegend={canActivateLegend(state, human.id)}
+              legendActivationLabel={getLegendActivationLabel(state, human.id)}
             />
           </div>
         </Panel>
@@ -372,6 +376,7 @@ function SidePlayerInfo({
   championIsPlayable,
   onActivateLegend,
   canActivateLegend,
+  legendActivationLabel,
 }: {
   player: PlayerState;
   active: boolean;
@@ -380,6 +385,7 @@ function SidePlayerInfo({
   championIsPlayable?: boolean;
   onActivateLegend?: () => void;
   canActivateLegend?: boolean;
+  legendActivationLabel?: string | null;
 }) {
   const zoom = useCardZoom();
   return (
@@ -436,11 +442,16 @@ function SidePlayerInfo({
         <div className="text-[9px] uppercase tracking-wide opacity-60">
           Legend
         </div>
-        <button
+        <motion.button
           onContextMenu={(e) => {
             e.preventDefault();
             zoom.open(player.legendZone);
           }}
+          animate={{
+            rotate: player.legendExhausted ? 8 : 0,
+            opacity: player.legendExhausted ? 0.55 : 1,
+          }}
+          transition={{ type: "spring", stiffness: 200, damping: 18 }}
           className="relative h-24 w-full overflow-hidden rounded border-2"
           style={{
             borderColor: getDomainHex(
@@ -461,15 +472,34 @@ function SidePlayerInfo({
           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 to-transparent p-0.5 text-[9px] font-bold leading-tight">
             {player.legendZone.name}
           </div>
-        </button>
-        {canActivateLegend && onActivateLegend && (
+          {player.legendExhausted && (
+            <div className="absolute right-0 top-0 rounded-bl bg-zinc-700 px-1 text-[8px] font-bold">
+              EXHAUSTED
+            </div>
+          )}
+        </motion.button>
+        {!faceDown && hasActivatedAbility(player.legendZone.id) && (
           <button
             onClick={onActivateLegend}
-            className="mt-1 w-full rounded bg-yellow-700 px-1 py-0.5 text-[10px] font-bold hover:bg-yellow-600"
+            disabled={!canActivateLegend}
+            title={legendActivationLabel ?? ""}
+            className={cn(
+              "mt-1 w-full rounded px-1 py-0.5 text-[9px] font-bold",
+              canActivateLegend
+                ? "bg-yellow-600 hover:bg-yellow-500"
+                : "bg-zinc-800 opacity-50",
+            )}
           >
-            Activate
+            Activate{legendActivationLabel ? ` — ${legendActivationLabel}` : ""}
           </button>
         )}
+        {!faceDown &&
+          !hasActivatedAbility(player.legendZone.id) &&
+          (player.legendZone.rulesText ?? "").trim().length > 0 && (
+            <div className="mt-1 rounded bg-yellow-900/30 px-1 py-0.5 text-[9px] italic opacity-70">
+              passive only
+            </div>
+          )}
       </div>
 
       {/* Champion */}

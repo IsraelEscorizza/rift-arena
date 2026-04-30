@@ -29,6 +29,9 @@ import {
   RuneInstance,
 } from "./types";
 import { CARDS_BY_ID, findBasicRuneOfDomain } from "@/lib/cards/database";
+import { getAbilities } from "./abilities/registry";
+import { TriggerContext, TriggerKind } from "./abilities/types";
+import { isMighty } from "./abilities/effects";
 
 const VICTORY_SCORE = 8;
 const STARTING_HAND = 4;
@@ -136,6 +139,7 @@ function buildPlayer(id: string, name: string, deck: DeckList): PlayerState {
     base: { units: [], gear: [], runes: [] },
     championZone: chosen,
     legendZone: legend,
+    legendExhausted: false,
     domainIdentity: legend.domains,
     pool: emptyPool(),
   };
@@ -195,6 +199,7 @@ export function createGame(
     winnerId: null,
     pendingMove: null,
     pendingPlay: null,
+    delayedEffects: [],
   };
 
   // Run start-of-game phases automatically
@@ -274,10 +279,11 @@ export function enterPhase(state: GameState, phase: GameState["phase"]) {
   const active = getPlayer(state, state.turnPlayerId);
   switch (phase) {
     case "awaken":
-      // Ready everything (units, gear, runes) at active player's locations
+      // Ready everything (units, gear, runes, legend) at active player's locations
       for (const u of active.base.units) u.exhausted = false;
       for (const g of active.base.gear) g.exhausted = false;
       for (const r of active.base.runes) r.exhausted = false;
+      active.legendExhausted = false;
       // Reset enteredThisTurn
       for (const u of active.base.units) u.enteredThisTurn = false;
       log(state, `${active.name}: Awaken Phase.`);
@@ -326,6 +332,7 @@ export function enterPhase(state: GameState, phase: GameState["phase"]) {
       break;
     case "main":
       log(state, `${active.name}: Main Phase.`);
+      processDelayedEffects(state);
       break;
     case "ending":
       log(state, `${active.name}: Ending Phase.`);
@@ -532,6 +539,11 @@ export function playCard(state: GameState, uid: string): GameState {
     card.enteredThisTurn = true;
     player.base.units.push(card);
     log(state, `${player.name} plays unit ${def.name}.`);
+    // Fire onPlayUnit triggers
+    emitTrigger(state, "onPlayUnit", { unitUid: card.uid });
+    if (isMighty(card)) {
+      emitTrigger(state, "onPlayMightyUnit", { unitUid: card.uid });
+    }
   } else if (def.type === "Gear") {
     card.zone = "base";
     card.exhausted = false;
@@ -633,6 +645,15 @@ export function standardMoveMultiple(
     } else {
       log(state, `${playerName} returns ${movers.length} units to base.`);
     }
+  }
+
+  // Fire onOpponentMove triggers (one per moving unit, for opposing players' units to react)
+  for (const m of movers) {
+    emitTrigger(state, "onOpponentMove", {
+      destBfUid: destBfUid ?? null,
+      movedUnitUid: m.card.uid,
+      moverId: m.card.controllerId,
+    });
   }
 
   // Check contested + combat ONCE for the whole batch
@@ -838,6 +859,11 @@ function score(
   if (bf.scoredByThisTurn.includes(playerId)) return;
   bf.scoredByThisTurn.push(playerId);
   addPoints(state, playerId, 1, false, via);
+  if (via === "Hold") {
+    emitTrigger(state, "onHoldHere", { bfUid, playerId });
+  } else {
+    emitTrigger(state, "onConquerHere", { bfUid, playerId });
+  }
 }
 
 function addPoints(
@@ -1026,12 +1052,122 @@ export function activateLegend(state: GameState, playerId: string): GameState {
   if (state.phase !== "main") return state;
   if (playerId !== state.turnPlayerId) return state;
   const p = getPlayer(state, playerId);
-  // Stub — abilities aren't parsed/wired yet. Just log.
-  log(
-    state,
-    `${p.name} activates ${p.legendZone.name} — resolve its ability manually.`,
-  );
+  const abilities = getAbilities(p.legendZone.id);
+  if (!abilities?.activated?.length) {
+    log(state, `${p.legendZone.name} has no implemented activated ability.`);
+    return state;
+  }
+  const ab = abilities.activated[0];
+  if (!ab.canActivate(state, playerId)) {
+    log(state, `${p.name} cannot activate ${p.legendZone.name} right now.`);
+    return state;
+  }
+  ab.resolve(state, playerId);
   return state;
+}
+
+export function canActivateLegend(state: GameState, playerId: string): boolean {
+  if (state.winnerId) return false;
+  if (state.phase !== "main") return false;
+  if (playerId !== state.turnPlayerId) return false;
+  const p = getPlayer(state, playerId);
+  const abilities = getAbilities(p.legendZone.id);
+  if (!abilities?.activated?.length) return false;
+  return abilities.activated[0].canActivate(state, playerId);
+}
+
+export function getLegendActivationLabel(
+  state: GameState,
+  playerId: string,
+): string | null {
+  const p = getPlayer(state, playerId);
+  const abilities = getAbilities(p.legendZone.id);
+  if (!abilities?.activated?.length) return null;
+  return abilities.activated[0].describe(state, playerId);
+}
+
+// ----------------------- triggers -----------------------
+
+/** Walk every legend, every battlefield unit, and fire any ability whose
+ * trigger kind matches and predicate passes. */
+function emitTrigger(
+  state: GameState,
+  kind: TriggerKind,
+  data?: Record<string, unknown>,
+): void {
+  for (const player of state.players) {
+    // Legend triggers
+    const legendAbilities = getAbilities(player.legendZone.id);
+    if (legendAbilities?.triggers) {
+      for (const t of legendAbilities.triggers) {
+        if (t.kind !== kind) continue;
+        const ctx: TriggerContext = {
+          state,
+          controllerId: player.id,
+          sourceUid: null,
+          data,
+        };
+        if (t.predicate && !t.predicate(ctx)) continue;
+        log(state, t.describe(ctx));
+        t.resolve(ctx);
+      }
+    }
+    // Unit triggers (champions, others)
+    for (const unit of player.base.units) {
+      const ab = getAbilities(unit.defId);
+      if (!ab?.triggers) continue;
+      for (const t of ab.triggers) {
+        if (t.kind !== kind) continue;
+        const ctx: TriggerContext = {
+          state,
+          controllerId: player.id,
+          sourceUid: unit.uid,
+          data,
+        };
+        if (t.predicate && !t.predicate(ctx)) continue;
+        log(state, t.describe(ctx));
+        t.resolve(ctx);
+      }
+    }
+  }
+}
+
+function processDelayedEffects(state: GameState) {
+  const remaining: typeof state.delayedEffects = [];
+  for (const eff of state.delayedEffects) {
+    const phaseMatch = eff.fireOn.phase === state.phase;
+    const playerMatch =
+      !eff.fireOn.turnPlayerId || eff.fireOn.turnPlayerId === state.turnPlayerId;
+    if (phaseMatch && playerMatch) {
+      log(state, `Delayed: ${eff.description}`);
+      switch (eff.kind) {
+        case "add_rainbow_power": {
+          const p = getPlayer(state, eff.ownerId);
+          p.pool.power.Colorless += 1;
+          break;
+        }
+        case "channel_runes": {
+          const n = (eff.payload?.n as number) ?? 1;
+          const p = getPlayer(state, eff.ownerId);
+          for (let i = 0; i < n; i++) {
+            const r = p.runeDeck.shift();
+            if (!r) break;
+            r.zone = "base";
+            p.base.runes.push(r);
+          }
+          break;
+        }
+        case "draw": {
+          const n = (eff.payload?.n as number) ?? 1;
+          drawCards(state, eff.ownerId, n);
+          break;
+        }
+      }
+    } else {
+      remaining.push(eff);
+    }
+  }
+  state.delayedEffects = remaining;
 }
 
 // ---------------- public surface ----------------

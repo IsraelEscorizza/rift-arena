@@ -132,6 +132,7 @@ export interface PlayerState {
   // Special zones
   championZone: CardInstance | null; // chosen champion
   legendZone: CardDefinition; // legend never leaves; just keep the definition
+  legendExhausted: boolean; // track exhausted state for activated abilities
   domainIdentity: Domain[];
   // Resources (cleared each turn end and at end of draw phase)
   pool: ResourcePool;
@@ -181,6 +182,22 @@ export interface GameState {
   // When user clicks a card whose Power cost requires recycling runes,
   // we hold this state until they pick which runes to recycle.
   pendingPlay: PendingPlay | null;
+  // Effects that will fire at a future scheduled time (e.g. start of next main).
+  delayedEffects: DelayedEffect[];
+}
+
+export interface DelayedEffect {
+  uid: string;
+  ownerId: string;
+  fireOn: { phase: Phase; turnPlayerId?: string }; // fires when entering this phase under condition
+  description: string;
+  /** kind = effect type, payload = data */
+  kind:
+    | "add_rainbow_power"
+    | "channel_runes"
+    | "draw"
+    | "deal_damage";
+  payload?: Record<string, unknown>;
 }
 
 export interface DeckList {
