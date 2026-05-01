@@ -198,7 +198,10 @@ export function GameBoard() {
                   ))}
                 </div>
                 <UnitsRow
-                  units={ai.base.units.filter((u) => !u.battlefieldId)}
+                  units={[
+                    ...ai.base.units.filter((u) => !u.battlefieldId),
+                    ...ai.base.gear,
+                  ]}
                   label="AI base"
                   size="sm"
                 />
@@ -235,7 +238,10 @@ export function GameBoard() {
             <Panel defaultSize={18} minSize={10} order={3}>
               <div className="flex h-full flex-col items-center p-1">
                 <UnitsRow
-                  units={human.base.units.filter((u) => !u.battlefieldId)}
+                  units={[
+                    ...human.base.units.filter((u) => !u.battlefieldId),
+                    ...human.base.gear,
+                  ]}
                   label="Your base"
                   size="md"
                   selectedUids={selected}
@@ -250,58 +256,65 @@ export function GameBoard() {
             </Panel>
             <ResizeBarH />
 
-            {/* Runes + Hand on the same row */}
+            {/* Runes + Hand on the same row, resizable */}
             <Panel defaultSize={20} minSize={12} order={4}>
-              <div className="flex h-full gap-2 p-1">
-                {/* Runes container */}
-                <div className="flex shrink-0 flex-col rounded border border-fuchsia-900/30 bg-black/40 p-1">
-                  <RuneRow
-                    runes={human.base.runes}
-                    label="Your runes"
-                    size="md"
-                    disabled={!activeIsHuman}
-                    onTap={tapRune}
-                    onUntap={untapRune}
-                    onRecycle={recycleRune}
-                    canUntap={(uid) => canUntapRune(state, uid)}
-                    pending={pending}
-                    onPendingRecycle={recycleForPending}
-                    isValidPending={(uid) =>
-                      isValidRecycleForPending(state, uid)
-                    }
-                  />
-                </div>
-                {/* Hand container */}
-                <div className="flex flex-1 flex-col rounded border border-fuchsia-900/30 bg-black/40 p-1">
-                  <div className="text-[9px] uppercase opacity-50">
-                    Your hand ({human.hand.length})
+              <PanelGroup
+                direction="horizontal"
+                autoSaveId="riftarena.layout.runes-hand.v1"
+                className="h-full"
+              >
+                <Panel defaultSize={28} minSize={15} order={1}>
+                  <div className="flex h-full flex-col rounded border border-fuchsia-900/30 bg-black/40 p-1">
+                    <RuneRow
+                      runes={human.base.runes}
+                      label="Your runes"
+                      size="md"
+                      disabled={!activeIsHuman}
+                      onTap={tapRune}
+                      onUntap={untapRune}
+                      onRecycle={recycleRune}
+                      canUntap={(uid) => canUntapRune(state, uid)}
+                      pending={pending}
+                      onPendingRecycle={recycleForPending}
+                      isValidPending={(uid) =>
+                        isValidRecycleForPending(state, uid)
+                      }
+                    />
                   </div>
-                  <div className="flex flex-1 items-end justify-center gap-1 overflow-x-auto">
-                    {human.hand.map((c) => {
-                      const playable =
-                        canPlayCard(state, c.uid) ||
-                        canPotentiallyAfford(state, c.uid);
-                      return (
-                        <motion.div
-                          key={c.uid}
-                          initial={{ y: 30, opacity: 0 }}
-                          animate={{ y: 0, opacity: playable ? 1 : 0.55 }}
-                          className={cn(
-                            "relative",
-                            !playable && "grayscale-[40%]",
-                          )}
-                        >
-                          <GameCard
-                            card={c}
-                            size="md"
-                            onClick={() => playable && tryPlayHandCard(c.uid)}
-                          />
-                        </motion.div>
-                      );
-                    })}
+                </Panel>
+                <ResizeBar />
+                <Panel defaultSize={72} minSize={40} order={2}>
+                  <div className="flex h-full flex-col rounded border border-fuchsia-900/30 bg-black/40 p-1">
+                    <div className="text-[9px] uppercase opacity-50">
+                      Your hand ({human.hand.length})
+                    </div>
+                    <div className="flex flex-1 items-end justify-center gap-1 overflow-x-auto">
+                      {human.hand.map((c) => {
+                        const playable =
+                          canPlayCard(state, c.uid) ||
+                          canPotentiallyAfford(state, c.uid);
+                        return (
+                          <motion.div
+                            key={c.uid}
+                            initial={{ y: 30, opacity: 0 }}
+                            animate={{ y: 0, opacity: playable ? 1 : 0.55 }}
+                            className={cn(
+                              "relative",
+                              !playable && "grayscale-[40%]",
+                            )}
+                          >
+                            <GameCard
+                              card={c}
+                              size="md"
+                              onClick={() => playable && tryPlayHandCard(c.uid)}
+                            />
+                          </motion.div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              </div>
+                </Panel>
+              </PanelGroup>
             </Panel>
           </PanelGroup>
         </Panel>
@@ -388,19 +401,28 @@ export function GameBoard() {
         <div className="absolute left-1/2 top-12 z-40 -translate-x-1/2 rounded-lg bg-fuchsia-900/95 px-4 py-2 text-sm font-bold shadow-2xl ring-2 ring-fuchsia-400">
           <div className="flex items-center gap-2">
             <Sparkle className="h-4 w-4 text-yellow-300" />
-            Pick {pending.powerLeft} rune{pending.powerLeft > 1 ? "s" : ""} to
-            recycle for power (
-            <span className="inline-flex gap-1">
-              {pending.neededDomains.map((d) => (
-                <DomainIcon key={d} domain={d} size={14} />
-              ))}
-            </span>
-            )
+            Pay
+            {pending.energyLeft > 0 && (
+              <span className="flex items-center gap-1">
+                <EnergyIcon size={14} />
+                <span>{pending.energyLeft}</span>
+                <span className="text-[10px] opacity-70">(tap runes)</span>
+              </span>
+            )}
+            {pending.powerLeft > 0 && (
+              <span className="flex items-center gap-1">
+                {pending.neededDomains.map((d) => (
+                  <DomainIcon key={d} domain={d} size={14} />
+                ))}
+                <span>{pending.powerLeft}</span>
+                <span className="text-[10px] opacity-70">(use ↻ to recycle)</span>
+              </span>
+            )}
             <button
               onClick={() => cancelPending()}
-              className="ml-2 rounded bg-black/40 p-1 hover:bg-black/60"
+              className="ml-2 rounded bg-black/40 px-2 py-0.5 text-[11px] hover:bg-black/60"
             >
-              <X className="h-3 w-3" />
+              Cancel <X className="inline h-3 w-3" />
             </button>
           </div>
         </div>
@@ -894,26 +916,21 @@ function RuneChip({
 }) {
   const def = CARDS_BY_ID[rune.defId];
   const px = size === "lg" ? 64 : 48;
+  // Main click is always tap/untap. Recycle is via the ↻ button (which auto-
+  // decrements pendingPlay.powerLeft if the rune matches needed domains).
   const handleMainClick = () => {
-    if (pendingRecycle && onPendingRecycle) {
-      onPendingRecycle();
-      return;
-    }
     if (rune.exhausted) {
       if (refundable) onUntap();
     } else {
       onTap();
     }
   };
-  const mainDisabled =
-    !pendingRecycle && (disabled || (rune.exhausted && !refundable));
-  const tooltip = pendingRecycle
-    ? "Click to recycle for required power"
-    : rune.exhausted
-      ? refundable
-        ? "Click to untap (refund 1 energy)"
-        : "Tapped — energy already spent"
-      : "Click to tap for 1 energy";
+  const mainDisabled = disabled || (rune.exhausted && !refundable);
+  const tooltip = rune.exhausted
+    ? refundable
+      ? "Click to untap (refund 1 energy)"
+      : "Tapped — energy already spent"
+    : "Click to tap for 1 energy";
 
   return (
     <motion.div

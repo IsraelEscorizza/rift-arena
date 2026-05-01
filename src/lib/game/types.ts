@@ -157,7 +157,8 @@ export interface PendingTarget {
 
 export interface PendingPlay {
   cardUid: string;
-  powerLeft: number;
+  energyLeft: number; // energy still owed
+  powerLeft: number; // power still owed
   neededDomains: Domain[]; // domains that satisfy this card's power
 }
 

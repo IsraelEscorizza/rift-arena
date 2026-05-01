@@ -406,6 +406,11 @@ export function tapRuneForEnergy(state: GameState, runeUid: string): GameState {
   const p = getPlayer(state, r.ownerId);
   p.pool.energy += 1;
   log(state, `${p.name} taps ${CARDS_BY_ID[r.defId]?.name ?? "rune"} for [1].`);
+  // Pending play accounting
+  if (state.pendingPlay) {
+    state.pendingPlay.energyLeft = Math.max(0, state.pendingPlay.energyLeft - 1);
+    tryFinalizePending(state);
+  }
   return state;
 }
 
@@ -452,6 +457,14 @@ export function recycleRuneForPower(state: GameState, runeUid: string): GameStat
     p.pool.power[domain] += 1;
   }
   log(state, `${p.name} recycles rune for [${domain[0]}].`);
+  // Pending play accounting
+  if (state.pendingPlay) {
+    const pp = state.pendingPlay;
+    if (pp.neededDomains.includes(domain) || domain === "Colorless") {
+      pp.powerLeft = Math.max(0, pp.powerLeft - 1);
+    }
+    tryFinalizePending(state);
+  }
   return state;
 }
 
@@ -993,7 +1006,7 @@ function addPoints(
 export function attemptPlayCard(state: GameState, uid: string): GameState {
   if (state.winnerId) return state;
   if (state.phase !== "main") return state;
-  if (state.pendingPlay) return state; // already prompting
+  if (state.pendingPlay) return state;
 
   const card = findCard(state, uid);
   if (!card) return state;
@@ -1003,74 +1016,55 @@ export function attemptPlayCard(state: GameState, uid: string): GameState {
   const def = CARDS_BY_ID[card.defId];
   const player = getPlayer(state, card.ownerId);
 
-  const energyNeed = (def.energy ?? 0) - player.pool.energy;
+  const energyNeed = Math.max(0, (def.energy ?? 0) - player.pool.energy);
   const totalPower = Object.values(player.pool.power).reduce((a, b) => a + b, 0);
-  const powerNeed = (def.power ?? 0) - totalPower;
+  const powerNeed = Math.max(0, (def.power ?? 0) - totalPower);
 
-  if (energyNeed <= 0 && powerNeed <= 0) {
+  // Already affordable — pay and play instantly.
+  if (energyNeed === 0 && powerNeed === 0) {
     return playCard(state, uid);
   }
 
-  // Cost model: a single rune can contribute BOTH energy (by tap) and power
-  // (by recycle of the now-exhausted rune). So min runes needed = max(E, P).
-  // Power-providers must be matching domain (or Colorless).
+  // Validate it COULD be paid given total rune resources (max(E,P) ready,
+  // P matching). One rune can contribute BOTH 1 energy (tap) AND 1 power
+  // (recycle the same rune).
   const ready = player.base.runes.filter((r) => !r.exhausted);
-  const cardDomains = def.domains;
-  const allMatchingInBase = player.base.runes.filter(
-    (r) => cardDomains.includes(r.domain) || r.domain === "Colorless",
+  const allMatching = player.base.runes.filter(
+    (r) => def.domains.includes(r.domain) || r.domain === "Colorless",
   );
-  const totalRunesNeeded = Math.max(energyNeed, powerNeed);
-
-  if (ready.length < totalRunesNeeded) {
-    log(
-      state,
-      `Cannot play ${def.name}: need ${totalRunesNeeded} ready runes, only ${ready.length}.`,
-    );
+  if (ready.length < Math.max(energyNeed, powerNeed)) {
+    log(state, `Cannot play ${def.name}: not enough ready runes.`);
     return state;
   }
-  if (allMatchingInBase.length < powerNeed) {
-    log(
-      state,
-      `Cannot play ${def.name}: not enough matching runes for ${powerNeed} power.`,
-    );
+  if (allMatching.length < powerNeed) {
+    log(state, `Cannot play ${def.name}: not enough matching runes for power.`);
     return state;
   }
 
-  // Tap energyNeed runes. Prefer non-matching first so matching runes stay
-  // ready for explicit recycling. (Both work mechanically thanks to the new
-  // overlap rule, but this makes the UI less surprising.)
-  const tapPool = [...ready];
-  tapPool.sort((a, b) => {
-    const aM = cardDomains.includes(a.domain) || a.domain === "Colorless" ? 1 : 0;
-    const bM = cardDomains.includes(b.domain) || b.domain === "Colorless" ? 1 : 0;
-    return aM - bM;
-  });
-  for (let i = 0; i < energyNeed; i++) {
-    const r = tapPool[i];
-    r.exhausted = true;
-    player.pool.energy += 1;
-  }
-  if (energyNeed > 0) {
-    log(
-      state,
-      `${player.name} auto-taps ${energyNeed} rune${energyNeed > 1 ? "s" : ""} for energy.`,
-    );
-  }
-
-  if (powerNeed <= 0) {
-    return playCard(state, uid);
-  }
-
+  // Set pending — user pays manually. Tap runes (chip click) for energy,
+  // recycle (↻ button) for power. Pending auto-finalizes once both met.
   state.pendingPlay = {
     cardUid: uid,
+    energyLeft: energyNeed,
     powerLeft: powerNeed,
-    neededDomains: [...cardDomains],
+    neededDomains: [...def.domains],
   };
   log(
     state,
-    `${player.name}: pick ${powerNeed} rune${powerNeed > 1 ? "s" : ""} to recycle for ${def.name}'s power.`,
+    `${player.name}: pay ${energyNeed} energy + ${powerNeed} power for ${def.name}.`,
   );
   return state;
+}
+
+/** Try to finalize a pending play if all costs are met. */
+function tryFinalizePending(state: GameState) {
+  const pp = state.pendingPlay;
+  if (!pp) return;
+  if (pp.energyLeft > 0 || pp.powerLeft > 0) return;
+  const cardUid = pp.cardUid;
+  state.pendingPlay = null;
+  // playCard will subtract from pool; pool should now have enough.
+  playCard(state, cardUid);
 }
 
 export function isValidRecycleForPending(
