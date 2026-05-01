@@ -88,6 +88,8 @@ export interface CardInstance {
   exhausted: boolean;
   damage: number;
   buffCount: 0 | 1; // Riftbound: max 1 buff per unit
+  /** Temporary +might that expires at end of turn (for "this turn" effects). */
+  tempMightThisTurn?: number;
   enteredThisTurn: boolean;
   attachments: string[]; // gear uids attached
 }
@@ -182,8 +184,23 @@ export interface GameState {
   // When user clicks a card whose Power cost requires recycling runes,
   // we hold this state until they pick which runes to recycle.
   pendingPlay: PendingPlay | null;
+  // After a spell with target is "played" but before it resolves, we hold this.
+  pendingSpellTarget: PendingSpellTarget | null;
   // Effects that will fire at a future scheduled time (e.g. start of next main).
   delayedEffects: DelayedEffect[];
+}
+
+export interface PendingSpellTarget {
+  spellUid: string;
+  defId: string;
+  casterId: string;
+  targetKind:
+    | "any_unit"
+    | "enemy_unit"
+    | "friendly_unit"
+    | "battlefield"
+    | "player";
+  description: string;
 }
 
 export interface DelayedEffect {

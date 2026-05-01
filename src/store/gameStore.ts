@@ -5,11 +5,13 @@ import {
   activateLegend,
   attemptPlayCard,
   cancelPendingPlay,
+  cancelSpellTarget,
   createGame,
   nextPhase,
   playCard,
   recycleForPending,
   recycleRuneForPower,
+  resolveSpellTarget,
   standardMove,
   standardMoveMultiple,
   tapRuneForEnergy,
@@ -56,6 +58,8 @@ interface GameStore {
   attemptPlayCard: (uid: string) => void;
   recycleForPending: (runeUid: string) => void;
   cancelPendingPlay: () => void;
+  resolveSpellTarget: (targetUid: string) => void;
+  cancelSpellTarget: () => void;
   activateLegend: () => void;
   tapRune: (uid: string) => void;
   untapRune: (uid: string) => void;
@@ -159,6 +163,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const cur = get().state;
     if (!cur) return;
     set({ state: cancelPendingPlay(clone(cur)) });
+  },
+  resolveSpellTarget: (targetUid) => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: resolveSpellTarget(clone(cur), targetUid) });
+  },
+  cancelSpellTarget: () => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: cancelSpellTarget(clone(cur)) });
   },
   activateLegend: () => {
     const cur = get().state;

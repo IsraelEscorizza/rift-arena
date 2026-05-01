@@ -18,6 +18,7 @@ import {
   canUntapRune,
   getLegendActivationLabel,
   isValidRecycleForPending,
+  isValidSpellTarget,
 } from "@/lib/game/engine";
 import { hasActivatedAbility } from "@/lib/game/abilities/registry";
 import { useGameStore } from "@/store/gameStore";
@@ -50,6 +51,8 @@ export function GameBoard() {
   const attemptPlay = useGameStore((s) => s.attemptPlayCard);
   const recycleForPending = useGameStore((s) => s.recycleForPending);
   const cancelPending = useGameStore((s) => s.cancelPendingPlay);
+  const resolveSpellTarget = useGameStore((s) => s.resolveSpellTarget);
+  const cancelSpellTarget = useGameStore((s) => s.cancelSpellTarget);
   const activateLegend = useGameStore((s) => s.activateLegend);
   const next = useGameStore((s) => s.nextPhase);
   const tapRune = useGameStore((s) => s.tapRune);
@@ -65,6 +68,7 @@ export function GameBoard() {
   const ai = state.players[1];
   const activeIsHuman = state.turnPlayerId === human.id;
   const pending = state.pendingPlay;
+  const pendingSpell = state.pendingSpellTarget;
 
   function toggleSelect(uid: string) {
     setSelected((cur) =>
@@ -75,9 +79,21 @@ export function GameBoard() {
     setSelected([]);
   }
   function handleUnitClick(unit: CardInstance) {
+    // If a spell is awaiting a unit target, click on a unit selects it
+    if (pendingSpell && isValidSpellTarget(state!, unit.uid)) {
+      resolveSpellTarget(unit.uid);
+      return;
+    }
     if (unit.controllerId !== human.id) return;
     if (unit.exhausted) return;
     toggleSelect(unit.uid);
+  }
+  function handleBattlefieldTargetable(bfUid: string) {
+    if (pendingSpell && isValidSpellTarget(state!, bfUid)) {
+      resolveSpellTarget(bfUid);
+      return true;
+    }
+    return false;
   }
   function moveSelectionTo(destBfUid: string | null) {
     if (selected.length === 0) return;
@@ -199,8 +215,16 @@ export function GameBoard() {
                     state={state}
                     bfUid={bf.uid}
                     selectedUnitUids={selected}
-                    onBattlefieldClick={() => moveSelectionTo(bf.uid)}
+                    onBattlefieldClick={() => {
+                      if (handleBattlefieldTargetable(bf.uid)) return;
+                      moveSelectionTo(bf.uid);
+                    }}
                     onUnitClick={handleUnitClick}
+                    spellTargetable={
+                      pendingSpell && isValidSpellTarget(state, bf.uid)
+                        ? true
+                        : false
+                    }
                   />
                 ))}
               </div>
@@ -337,6 +361,25 @@ export function GameBoard() {
           <button onClick={clearSelection} className="ml-2 underline">
             cancel
           </button>
+        </div>
+      )}
+
+      {/* Pending spell target prompt */}
+      {pendingSpell && (
+        <div className="absolute left-1/2 top-12 z-40 -translate-x-1/2 rounded-lg bg-cyan-900/95 px-4 py-2 text-sm font-bold shadow-2xl ring-2 ring-cyan-300">
+          <div className="flex items-center gap-2">
+            <Sparkle className="h-4 w-4 text-yellow-300" />
+            {pendingSpell.description} — pick a {pendingSpell.targetKind.replace(
+              "_",
+              " ",
+            )}.
+            <button
+              onClick={() => cancelSpellTarget()}
+              className="ml-2 rounded bg-black/40 p-1 hover:bg-black/60"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -961,12 +1004,14 @@ function BattlefieldView({
   selectedUnitUids,
   onBattlefieldClick,
   onUnitClick,
+  spellTargetable,
 }: {
   state: GameState;
   bfUid: string;
   selectedUnitUids: string[];
   onBattlefieldClick: () => void;
   onUnitClick: (u: CardInstance) => void;
+  spellTargetable?: boolean;
 }) {
   const zoom = useCardZoom();
   const bf = state.battlefields.find((b) => b.uid === bfUid)!;
@@ -1003,6 +1048,7 @@ function BattlefieldView({
               ? "border-rose-600"
               : "border-fuchsia-900",
         canMoveHere && "ring-4 ring-yellow-400 scale-[1.02]",
+        spellTargetable && "ring-4 ring-cyan-300 scale-[1.02]",
       )}
     >
       <div className="flex shrink-0 items-center justify-between bg-black/80 px-2 py-1 text-xs">

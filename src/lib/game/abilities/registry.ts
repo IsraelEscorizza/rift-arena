@@ -405,6 +405,361 @@ function findUnitOnBoard(
   return undefined;
 }
 
+// ============================================================================
+// PROVING GROUNDS (OGS) — 24 exclusive cards
+// ============================================================================
+
+const OGS = {
+  AnnieFiery: "69bc5bd8d308c64675ca8816",
+  Firestorm: "69bc5bd8d308c64675ca8817",
+  Incinerate: "69bc5bd8d308c64675ca8818",
+  MasterYiMeditative: "69bc5bd8d308c64675ca8819",
+  ZephyrSage: "69bc5bd8d308c64675ca881a",
+  LuxIlluminated: "69bc5bd8d308c64675ca881b",
+  GarenRugged: "69bc5bd9d308c64675ca881c",
+  GentlemensDuel: "69bc5bd9d308c64675ca881d",
+  MasterYiHoned: "69bc5bd9d308c64675ca881e",
+  AnnieStubborn: "69bc5bd9d308c64675ca881f",
+  Flash: "69bc5bd9d308c64675ca8820",
+  BlastOfPower: "69bc5bd9d308c64675ca8821",
+  GarenCommander: "69bc5bd9d308c64675ca8822",
+  LuxCrownguard: "69bc5bd9d308c64675ca8823",
+  RecruitTheVanguard: "69bc5bd9d308c64675ca8824",
+  VanguardAttendant: "69bc5bd9d308c64675ca8825",
+  AnnieDarkChildStarter: "69bc5bd9d308c64675ca8826",
+  Tibbers: "69bc5bd9d308c64675ca8827",
+  MasterYiWujuStarter: "69bc5bd9d308c64675ca8828",
+  Highlander: "69bc5bd9d308c64675ca8829",
+  LuxLadyStarter: "69bc5bd9d308c64675ca882a",
+  FinalSpark: "69bc5bd9d308c64675ca882b",
+  GarenMightStarter: "69bc5bd9d308c64675ca882c",
+  DecisiveStrike: "69bc5bd9d308c64675ca882d",
+};
+
+const RECRUIT_TOKEN_ID = "69bc5bd8d308c64675ca8810"; // 1-Might Recruit token (looked up; see note below)
+
+// Helper: deal damage to a unit
+function dealDamageTo(state: GameState, unitUid: string, n: number) {
+  for (const p of state.players) {
+    const u = p.base.units.find((x) => x.uid === unitUid);
+    if (u) {
+      u.damage += n;
+      logEvent(state, `${CARDS_BY_ID[u.defId].name} takes ${n} damage.`);
+      return;
+    }
+  }
+}
+function killUnit(state: GameState, unitUid: string) {
+  for (const p of state.players) {
+    const u = p.base.units.find((x) => x.uid === unitUid);
+    if (u) {
+      const def = CARDS_BY_ID[u.defId];
+      u.damage = (def.might ?? 0) + u.buffCount + 99; // ensure lethal
+      logEvent(state, `${def.name} is killed.`);
+      return;
+    }
+  }
+}
+
+// ---------- Legends ----------
+
+// Annie - Dark Child (Starter): At end of your turn, ready up to 2 runes.
+REGISTRY[OGS.AnnieDarkChildStarter] = {
+  triggers: [
+    {
+      kind: "atEndOfTurn",
+      predicate: (ctx) => ctx.data?.playerId === ctx.controllerId,
+      describe: () => "Annie — Dark Child: ready up to 2 runes.",
+      resolve: (ctx) => {
+        const p = findPlayer(ctx.state, ctx.controllerId);
+        let readied = 0;
+        for (const r of p.base.runes) {
+          if (readied >= 2) break;
+          if (r.exhausted) {
+            r.exhausted = false;
+            readied += 1;
+          }
+        }
+      },
+    },
+  ],
+};
+
+// Garen - Might of Demacia (Starter): same as base Garen
+REGISTRY[OGS.GarenMightStarter] = {
+  triggers: [
+    {
+      kind: "onConquerAny",
+      predicate: (ctx) => {
+        if ((ctx.data?.playerId as string) !== ctx.controllerId) return false;
+        const bfUid = ctx.data?.bfUid as string | undefined;
+        if (!bfUid) return false;
+        const p = findPlayer(ctx.state, ctx.controllerId);
+        return p.base.units.filter((u) => u.battlefieldId === bfUid).length >= 4;
+      },
+      describe: () => "Garen — 4+ units conquered, draw 2.",
+      resolve: (ctx) => drawCardsFor(ctx.state, ctx.controllerId, 2),
+    },
+  ],
+};
+
+// Lux - Lady of Luminosity (Starter): When you play a spell of cost 5+, draw 1.
+const luxStarterTrigger = {
+  kind: "onPlaySpell" as const,
+  predicate: (ctx: any) => {
+    if (ctx.data?.casterId !== ctx.controllerId) return false;
+    return ((ctx.data?.energyCost as number) ?? 0) >= 5;
+  },
+  describe: () => "Lux — Lady of Luminosity: big spell, draw 1.",
+  resolve: (ctx: any) => drawCardsFor(ctx.state, ctx.controllerId, 1),
+};
+REGISTRY[OGS.LuxLadyStarter] = { triggers: [luxStarterTrigger] };
+
+// Master Yi - Wuju Bladesman (Starter): friendly unit defends alone → +2 might.
+// Combat is auto-resolved without per-unit hooks; we approximate by checking
+// "alone" in effMight via a flag — left as a stub for now.
+REGISTRY[OGS.MasterYiWujuStarter] = {};
+
+// ---------- Champions / Units ----------
+
+// Annie - Fiery: passive aura "+1 bonus damage" — currently bonus damage isn't modeled.
+REGISTRY[OGS.AnnieFiery] = {};
+
+// Master Yi - Meditative: While 8+ runes, +4 Might.
+// Implement via tempMightThisTurn refresh? Better: add an aura check whenever might computed.
+// Simplest: at end of each phase change, recompute and stash a temp value. We'll handle
+// dynamically in effMight extension via def lookup — for now, log only.
+REGISTRY[OGS.MasterYiMeditative] = {};
+
+// Lux - Illuminated: When you play a spell costing 5+, +3 Might this turn.
+REGISTRY[OGS.LuxIlluminated] = {
+  triggers: [
+    {
+      kind: "onPlaySpell",
+      predicate: (ctx) => {
+        if (ctx.data?.casterId !== ctx.controllerId) return false;
+        const u = findUnitOnBoard(ctx.state, ctx.sourceUid!);
+        if (!u) return false;
+        return ((ctx.data?.energyCost as number) ?? 0) >= 5;
+      },
+      describe: () => "Lux — Illuminated: +3 Might this turn.",
+      resolve: (ctx) => {
+        const u = findUnitOnBoard(ctx.state, ctx.sourceUid!);
+        if (u) u.tempMightThisTurn = (u.tempMightThisTurn ?? 0) + 3;
+      },
+    },
+  ],
+};
+
+// Master Yi - Honed: I enter ready (Ganking handled at standardMove validation).
+REGISTRY[OGS.MasterYiHoned] = {
+  triggers: [
+    {
+      kind: "onPlayUnit",
+      predicate: (ctx) => ctx.data?.unitUid === ctx.sourceUid,
+      describe: () => "Master Yi — Honed enters ready.",
+      resolve: (ctx) => {
+        const u = findUnitOnBoard(ctx.state, ctx.sourceUid!);
+        if (u) u.exhausted = false;
+      },
+    },
+  ],
+};
+
+// Annie - Stubborn: When played, return a spell from trash to hand.
+REGISTRY[OGS.AnnieStubborn] = {
+  triggers: [
+    {
+      kind: "onPlayUnit",
+      predicate: (ctx) => ctx.data?.unitUid === ctx.sourceUid,
+      describe: () => "Annie — Stubborn: return a spell from trash to hand.",
+      resolve: (ctx) => {
+        const p = findPlayer(ctx.state, ctx.controllerId);
+        const idx = p.trash.findIndex(
+          (c) => CARDS_BY_ID[c.defId]?.type === "Spell",
+        );
+        if (idx >= 0) {
+          const c = p.trash.splice(idx, 1)[0];
+          c.zone = "hand";
+          p.hand.push(c);
+          logEvent(ctx.state, `${p.name} returns ${CARDS_BY_ID[c.defId].name} to hand.`);
+        }
+      },
+    },
+  ],
+};
+
+// Garen - Commander: Other friendly units +1 Might here.
+// Handled via effMight extension above.
+REGISTRY[OGS.GarenCommander] = {};
+
+// Lux - Crownguard: Exhaust → add 2 energy (spells only).
+// We don't enforce "spells only"; we just expose it as activated.
+REGISTRY[OGS.LuxCrownguard] = {
+  // We'd model as activated on a unit (not a legend) — engine currently only
+  // wires legend.activated. For MVP we leave this passive.
+};
+
+// Vanguard Attendant: I enter ready.
+REGISTRY[OGS.VanguardAttendant] = {
+  triggers: [
+    {
+      kind: "onPlayUnit",
+      predicate: (ctx) => ctx.data?.unitUid === ctx.sourceUid,
+      describe: () => "Vanguard Attendant enters ready.",
+      resolve: (ctx) => {
+        const u = findUnitOnBoard(ctx.state, ctx.sourceUid!);
+        if (u) u.exhausted = false;
+      },
+    },
+  ],
+};
+
+// Tibbers: When played, deal 3 to all units at battlefields.
+REGISTRY[OGS.Tibbers] = {
+  triggers: [
+    {
+      kind: "onPlayUnit",
+      predicate: (ctx) => ctx.data?.unitUid === ctx.sourceUid,
+      describe: () => "Tibbers: 3 damage to all units at battlefields.",
+      resolve: (ctx) => {
+        for (const p of ctx.state.players) {
+          for (const u of p.base.units) {
+            if (u.battlefieldId) u.damage += 3;
+          }
+        }
+      },
+    },
+  ],
+};
+
+// Zephyr Sage: Shield 1 — handled by keyword detection in convert script.
+REGISTRY[OGS.ZephyrSage] = {};
+
+// Garen - Rugged: Assault 2, Shield 2 — handled by keywords.
+REGISTRY[OGS.GarenRugged] = {};
+
+// ---------- Spells ----------
+
+// Firestorm: Deal 3 to all enemy units at a battlefield (target battlefield).
+REGISTRY[OGS.Firestorm] = {
+  spell: {
+    describe: "Deal 3 to all enemy units at target battlefield",
+    target: { kind: "battlefield" },
+    resolve: (state, casterId, targetUid) => {
+      if (!targetUid) return;
+      for (const p of state.players) {
+        if (p.id === casterId) continue;
+        for (const u of p.base.units) {
+          if (u.battlefieldId === targetUid) u.damage += 3;
+        }
+      }
+      logEvent(state, "Firestorm hits enemy units.");
+    },
+  },
+};
+
+// Incinerate: Deal 2 to a unit at a battlefield.
+REGISTRY[OGS.Incinerate] = {
+  spell: {
+    describe: "Deal 2 to a unit",
+    target: { kind: "any_unit" },
+    resolve: (state, _casterId, targetUid) => {
+      if (!targetUid) return;
+      dealDamageTo(state, targetUid, 2);
+    },
+  },
+};
+
+// Blast of Power: Kill a unit at a battlefield.
+REGISTRY[OGS.BlastOfPower] = {
+  spell: {
+    describe: "Kill a unit at a battlefield",
+    target: { kind: "any_unit" },
+    resolve: (state, _casterId, targetUid) => {
+      if (!targetUid) return;
+      killUnit(state, targetUid);
+    },
+  },
+};
+
+// Final Spark: Deal 8 to a unit.
+REGISTRY[OGS.FinalSpark] = {
+  spell: {
+    describe: "Deal 8 to a unit",
+    target: { kind: "any_unit" },
+    resolve: (state, _casterId, targetUid) => {
+      if (!targetUid) return;
+      dealDamageTo(state, targetUid, 8);
+    },
+  },
+};
+
+// Decisive Strike: Give friendly units +2 Might this turn.
+REGISTRY[OGS.DecisiveStrike] = {
+  spell: {
+    describe: "All your units gain +2 Might this turn",
+    target: { kind: "none" },
+    resolve: (state, casterId) => {
+      const p = findPlayer(state, casterId);
+      for (const u of p.base.units) {
+        u.tempMightThisTurn = (u.tempMightThisTurn ?? 0) + 2;
+      }
+      logEvent(state, `${p.name}'s units gain +2 Might.`);
+    },
+  },
+};
+
+// Recruit the Vanguard: Play four 1-Might Recruit unit tokens.
+// Tokens go to base by default (Riftbound rule: "playable to your base or to
+// battlefields you control"); MVP: drop to base.
+REGISTRY[OGS.RecruitTheVanguard] = {
+  spell: {
+    describe: "Spawn four 1-Might Recruit tokens at your base",
+    target: { kind: "none" },
+    resolve: (state, casterId) => {
+      // Look up the Recruit token def by name (since we may not have a stable id)
+      const recruitDef = Object.values(CARDS_BY_ID).find(
+        (c) =>
+          c.type === "Unit" &&
+          c.supertype === "Token" &&
+          c.tags?.includes("Recruit"),
+      );
+      if (!recruitDef) {
+        logEvent(state, "Recruit token def not found.");
+        return;
+      }
+      for (let i = 0; i < 4; i++) {
+        spawnToken(state, casterId, recruitDef.id, { ready: false });
+      }
+    },
+  },
+};
+
+// Flash: Reaction — move up to 2 friendly units to base. Skip target prompt for MVP.
+REGISTRY[OGS.Flash] = {
+  spell: {
+    describe: "Recall up to 2 of your units from battlefields to base",
+    target: { kind: "none" },
+    resolve: (state, casterId) => {
+      const p = findPlayer(state, casterId);
+      let moved = 0;
+      for (const u of p.base.units) {
+        if (moved >= 2) break;
+        if (u.battlefieldId) {
+          u.battlefieldId = undefined;
+          moved += 1;
+        }
+      }
+      logEvent(state, `${p.name} flashes ${moved} unit${moved !== 1 ? "s" : ""} home.`);
+    },
+  },
+};
+
+// Highlander, Gentlemen's Duel — too complex for MVP; left unimplemented.
+REGISTRY[OGS.Highlander] = {};
+REGISTRY[OGS.GentlemensDuel] = {};
+
 export function getAbilities(defId: string): CardAbilities | undefined {
   return REGISTRY[defId];
 }

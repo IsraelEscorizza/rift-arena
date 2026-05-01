@@ -12,6 +12,8 @@ export type TriggerKind =
   | "onAttack" // this unit gets attacker designation
   | "onDefend" // this unit gets defender designation
   | "atBeginningStart" // start of controller's Beginning Phase
+  | "atEndOfTurn" // end of controller's turn (Ending Phase)
+  | "onPlaySpell" // a spell is played by controller — data: { spellDefId, energyCost, powerCost }
   | "onOpponentMove"; // an opposing unit moves anywhere on the board
 
 export interface TriggerContext {
@@ -50,9 +52,29 @@ export interface ActivatedAbility {
   resolve: (state: GameState, controllerId: string) => void;
 }
 
+/** A spell effect describes what to do when a spell resolves.
+ * - `target`: what the player must select (or null if no target needed)
+ * - `resolve`: applies the effect; receives optional target uid
+ */
+export interface SpellEffect {
+  describe: string;
+  target:
+    | { kind: "none" }
+    | { kind: "any_unit" }
+    | { kind: "enemy_unit" }
+    | { kind: "friendly_unit" }
+    | { kind: "battlefield" }
+    | { kind: "player" };
+  resolve: (
+    state: import("../types").GameState,
+    casterId: string,
+    targetUid?: string,
+  ) => void;
+}
+
 export interface CardAbilities {
   triggers?: TriggerHandler[];
   activated?: ActivatedAbility[];
-  // Static/passive abilities (continuous effects) are not modeled separately;
-  // for keywords, the engine reads card.keywords directly.
+  /** For spells: the effect that fires on resolution. */
+  spell?: SpellEffect;
 }

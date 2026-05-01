@@ -199,6 +199,7 @@ export function createGame(
     winnerId: null,
     pendingMove: null,
     pendingPlay: null,
+    pendingSpellTarget: null,
     delayedEffects: [],
   };
 
@@ -255,6 +256,7 @@ function getMight(card: CardInstance): number {
   const def = CARDS_BY_ID[card.defId];
   let m = def.might ?? 0;
   m += card.buffCount;
+  m += card.tempMightThisTurn ?? 0;
   // Assault adds while attacker; we apply it during combat resolution, not here.
   return m;
 }
@@ -335,10 +337,13 @@ export function enterPhase(state: GameState, phase: GameState["phase"]) {
       break;
     case "ending":
       log(state, `${active.name}: Ending Phase.`);
+      emitTrigger(state, "atEndOfTurn", { playerId: active.id });
       // Heal all units, expire 'this turn' effects, empty rune pools
       for (const p of state.players) {
         for (const u of p.base.units) {
           u.damage = 0;
+          // Reset "this turn" temp might
+          (u as any).tempMightThisTurn = 0;
         }
         p.pool = emptyPool();
       }
@@ -549,10 +554,39 @@ export function playCard(state: GameState, uid: string): GameState {
     player.base.gear.push(card);
     log(state, `${player.name} plays gear ${def.name}.`);
   } else if (def.type === "Spell") {
-    // Without effect implementations, spell just goes to trash
-    card.zone = "trash";
-    player.trash.push(card);
-    log(state, `${player.name} casts spell ${def.name} (effects not yet implemented).`);
+    // Look up an implemented spell effect
+    const ab = getAbilities(def.id);
+    if (ab?.spell) {
+      log(state, `${player.name} casts ${def.name}: ${ab.spell.describe}.`);
+      if (ab.spell.target.kind === "none") {
+        ab.spell.resolve(state, player.id);
+        card.zone = "trash";
+        player.trash.push(card);
+      } else {
+        // Need user target — set pending and DON'T trash yet
+        state.pendingSpellTarget = {
+          spellUid: card.uid,
+          defId: def.id,
+          casterId: player.id,
+          targetKind: ab.spell.target.kind,
+          description: ab.spell.describe,
+        };
+        // Move spell to a temp banishment slot (we'll trash it on resolution)
+        card.zone = "banishment";
+        player.banishment.push(card);
+      }
+    } else {
+      card.zone = "trash";
+      player.trash.push(card);
+      log(state, `${player.name} casts ${def.name} (effects not implemented).`);
+    }
+    // Always fire onPlaySpell trigger
+    emitTrigger(state, "onPlaySpell", {
+      spellDefId: def.id,
+      energyCost: def.energy ?? 0,
+      powerCost: def.power ?? 0,
+      casterId: player.id,
+    });
   } else {
     log(state, `Cannot play ${def.name} of type ${def.type}.`);
   }
@@ -746,12 +780,28 @@ function runCombatAt(state: GameState, bf: BattlefieldInstance) {
   const attackers = units.filter((u) => u.player.id === attackerId);
   const defenders = units.filter((u) => u.player.id === defenderId);
 
-  // Compute Might (with Assault for attacker, Shield for defender)
+  // Compute Might (base + buff + tempMightThisTurn + Assault/Shield for role + adjacent auras)
   function effMight(card: CardInstance, role: "attacker" | "defender"): number {
     const def = CARDS_BY_ID[card.defId];
-    let m = (def.might ?? 0) + card.buffCount;
+    let m = (def.might ?? 0) + card.buffCount + (card.tempMightThisTurn ?? 0);
     if (role === "attacker") m += def.assault ?? 0;
     if (role === "defender") m += def.shield ?? 0;
+    // Garen - Commander aura: +1 to other friendly units at the same battlefield
+    const garenCommanderId = "69bc5bd9d308c64675ca8822";
+    if (card.battlefieldId) {
+      const owner = state.players.find((p) =>
+        p.base.units.find((u) => u.uid === card.uid),
+      );
+      if (owner) {
+        const hasCommanderAdjacent = owner.base.units.some(
+          (u) =>
+            u.uid !== card.uid &&
+            u.battlefieldId === card.battlefieldId &&
+            u.defId === garenCommanderId,
+        );
+        if (hasCommanderAdjacent) m += 1;
+      }
+    }
     return Math.max(0, m);
   }
 
@@ -1109,6 +1159,83 @@ export function getLegendActivationLabel(
   const abilities = getAbilities(p.legendZone.id);
   if (!abilities?.activated?.length) return null;
   return abilities.activated[0].describe(state, playerId);
+}
+
+// ----------------------- spell target resolution -----------------------
+
+export function isValidSpellTarget(
+  state: GameState,
+  targetUid: string,
+): boolean {
+  const p = state.pendingSpellTarget;
+  if (!p) return false;
+  switch (p.targetKind) {
+    case "any_unit": {
+      for (const pl of state.players) {
+        if (pl.base.units.find((u) => u.uid === targetUid)) return true;
+      }
+      return false;
+    }
+    case "enemy_unit": {
+      const opp = state.players.find((pl) => pl.id !== p.casterId);
+      return !!opp?.base.units.find((u) => u.uid === targetUid);
+    }
+    case "friendly_unit": {
+      const me = state.players.find((pl) => pl.id === p.casterId);
+      return !!me?.base.units.find((u) => u.uid === targetUid);
+    }
+    case "battlefield":
+      return !!state.battlefields.find((b) => b.uid === targetUid);
+    case "player":
+      return !!state.players.find((pl) => pl.id === targetUid);
+  }
+}
+
+export function resolveSpellTarget(
+  state: GameState,
+  targetUid: string,
+): GameState {
+  const p = state.pendingSpellTarget;
+  if (!p) return state;
+  if (!isValidSpellTarget(state, targetUid)) return state;
+  const ab = getAbilities(p.defId);
+  if (!ab?.spell) {
+    state.pendingSpellTarget = null;
+    return state;
+  }
+  ab.spell.resolve(state, p.casterId, targetUid);
+  // Move spell from banishment to trash
+  for (const pl of state.players) {
+    const idx = pl.banishment.findIndex((c) => c.uid === p.spellUid);
+    if (idx >= 0) {
+      const c = pl.banishment.splice(idx, 1)[0];
+      c.zone = "trash";
+      pl.trash.push(c);
+      break;
+    }
+  }
+  state.pendingSpellTarget = null;
+  // Trigger state-based actions
+  killDead(state);
+  return state;
+}
+
+export function cancelSpellTarget(state: GameState): GameState {
+  const p = state.pendingSpellTarget;
+  if (!p) return state;
+  // Move spell back to hand (refund) — simpler than tracking partial pay
+  for (const pl of state.players) {
+    const idx = pl.banishment.findIndex((c) => c.uid === p.spellUid);
+    if (idx >= 0) {
+      const c = pl.banishment.splice(idx, 1)[0];
+      c.zone = "hand";
+      pl.hand.push(c);
+      break;
+    }
+  }
+  log(state, `Spell cancelled (returned to hand).`);
+  state.pendingSpellTarget = null;
+  return state;
 }
 
 // ----------------------- triggers -----------------------
