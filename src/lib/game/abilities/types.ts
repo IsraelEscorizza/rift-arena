@@ -64,7 +64,10 @@ export interface SpellEffect {
     | { kind: "enemy_unit" }
     | { kind: "friendly_unit" }
     | { kind: "battlefield" }
-    | { kind: "player" };
+    | { kind: "player" }
+    | { kind: "unit_at_battlefield" }
+    | { kind: "enemy_unit_at_battlefield" }
+    | { kind: "friendly_unit_at_base" };
   resolve: (
     state: import("../types").GameState,
     casterId: string,

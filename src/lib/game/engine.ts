@@ -198,6 +198,12 @@ export function createGame(
     mulliganState: null,
   };
 
+  // Apply static battlefield modifiers (e.g. Aspirant's Climb)
+  const ASPIRANTS_CLIMB_ID = "69bc5befd308c64675ca89c0";
+  for (const defId of Object.keys(state.battlefieldDefs)) {
+    if (defId === ASPIRANTS_CLIMB_ID) state.victoryScore += 1;
+  }
+
   // Initialize mulligan before starting phases
   initMulligan(state);
   return state;
@@ -1270,6 +1276,25 @@ export function isValidSpellTarget(
       return !!state.battlefields.find((b) => b.uid === targetUid);
     case "player":
       return !!state.players.find((pl) => pl.id === targetUid);
+    case "unit_at_battlefield": {
+      for (const pl of state.players) {
+        const u = pl.base.units.find((u) => u.uid === targetUid);
+        if (u && u.battlefieldId) return true;
+      }
+      return false;
+    }
+    case "enemy_unit_at_battlefield": {
+      const opp = state.players.find((pl) => pl.id !== p.casterId);
+      return !!opp?.base.units.find(
+        (u) => u.uid === targetUid && !!u.battlefieldId,
+      );
+    }
+    case "friendly_unit_at_base": {
+      const me = state.players.find((pl) => pl.id === p.casterId);
+      return !!me?.base.units.find(
+        (u) => u.uid === targetUid && !u.battlefieldId,
+      );
+    }
   }
 }
 

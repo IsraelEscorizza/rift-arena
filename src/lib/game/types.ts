@@ -209,7 +209,10 @@ export interface PendingSpellTarget {
     | "enemy_unit"
     | "friendly_unit"
     | "battlefield"
-    | "player";
+    | "player"
+    | "unit_at_battlefield"          // any unit (friendly or enemy) that has a battlefieldId
+    | "enemy_unit_at_battlefield"    // enemy unit currently at a BF
+    | "friendly_unit_at_base";       // friendly unit NOT at a BF (in base)
   description: string;
 }
 

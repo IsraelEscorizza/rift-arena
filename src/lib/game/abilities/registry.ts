@@ -14,13 +14,23 @@ import { CARDS_BY_ID } from "@/lib/cards/database";
 import { CardInstance, GameState } from "../types";
 import { ActivatedCost, CardAbilities, TriggerHandler } from "./types";
 import {
+  addEnergy,
   addPower,
   channelRunes,
+  dealDamageToUnit,
   drawCardsFor,
+  findOpponent,
   findPlayer,
+  getMight,
   isMighty,
+  killFirstGear,
+  killUnitByUid,
   logEvent,
+  readyUnit,
+  recallUnit,
+  returnUnitToHand,
   spawnToken,
+  tempBuffUnit,
 } from "./effects";
 
 // ---- Token IDs (looked up from the card pool) ----
@@ -827,7 +837,7 @@ function makeEnergyAbility(cardId: string): CardAbilities {
           const gear = p.base.gear.find((g) => g.defId === cardId && !g.exhausted);
           if (!gear) return;
           gear.exhausted = true;
-          p.pool.energy += 1;
+          addEnergy(state, controllerId);
           logEvent(state, `${p.name} activates ${CARDS_BY_ID[cardId]?.name ?? "Energy Conduit"}: +1 Energy.`);
         },
       },
@@ -855,6 +865,376 @@ REGISTRY["69bc5bd2d308c64675ca8797"] = makeSealAbility("69bc5bd2d308c64675ca8797
 REGISTRY["69bc5bdcd308c64675ca8859"] = makeSealAbility("69bc5bdcd308c64675ca8859", "Chaos");
 // Energy Conduit (OGN)
 REGISTRY["69bc5bccd308c64675ca8722"] = makeEnergyAbility("69bc5bccd308c64675ca8722");
+
+// Orb of Regret — Exhaust: Give a unit -1 Might this turn (min 1).
+// MVP: auto-targets the highest-Might unit at any battlefield.
+REGISTRY["69bc5bcbd308c64675ca871a"] = {
+  activated: [
+    {
+      describe: () => "Exhaust → Give a unit -1 Might this turn (min 1)",
+      computeCost: () => ({ exhaustSelf: true }),
+      canActivate: (state, controllerId) => {
+        const inShowdown = state.combat?.step === "showdown";
+        if (inShowdown) {
+          if (state.combat?.showdownFocusId !== controllerId) return false;
+        } else {
+          if (state.phase !== "main") return false;
+          if (state.turnPlayerId !== controllerId) return false;
+        }
+        const p = findPlayer(state, controllerId);
+        if (!p.base.gear.some((g) => g.defId === "69bc5bcbd308c64675ca871a" && !g.exhausted)) return false;
+        // Need at least one unit on the board
+        return state.players.some((pl) => pl.base.units.some((u) => u.battlefieldId));
+      },
+      resolve: (state, controllerId) => {
+        const p = findPlayer(state, controllerId);
+        const gear = p.base.gear.find(
+          (g) => g.defId === "69bc5bcbd308c64675ca871a" && !g.exhausted,
+        );
+        if (!gear) return;
+        gear.exhausted = true;
+        // Pick highest-might unit at a battlefield (prefer enemy)
+        let best: CardInstance | null = null;
+        for (const pl of state.players) {
+          for (const u of pl.base.units) {
+            if (!u.battlefieldId) continue;
+            if (!best || getMight(u) > getMight(best)) best = u;
+          }
+        }
+        if (best) tempBuffUnit(state, best.uid, -1);
+      },
+    },
+  ],
+};
+
+// ============================================================================
+// SPELLS — OGN / SFD / General
+// Each entry is keyed by the card's riftcodex id.
+// ============================================================================
+
+// ---- No-target spells -------------------------------------------------------
+
+// Flurry of Blades — Deal 1 to all units at battlefields.
+REGISTRY["69bc5bced308c64675ca8748"] = {
+  spell: {
+    describe: "Deal 1 to all units at battlefields",
+    target: { kind: "none" },
+    resolve: (state) => {
+      const targets: CardInstance[] = [];
+      for (const pl of state.players)
+        for (const u of pl.base.units)
+          if (u.battlefieldId) targets.push(u);
+      for (const u of targets) dealDamageToUnit(state, u.uid, 1);
+      logEvent(state, `Flurry of Blades hits ${targets.length} unit(s).`);
+    },
+  },
+};
+
+// Acceptable Losses — Each player destroys one of their gear.
+REGISTRY["69bc5bd0d308c64675ca877b"] = {
+  spell: {
+    describe: "Each player destroys one of their gear",
+    target: { kind: "none" },
+    resolve: (state, casterId) => {
+      for (const pl of state.players) killFirstGear(state, pl.id);
+      logEvent(state, `Acceptable Losses: each player sacrifices a gear.`);
+      void casterId;
+    },
+  },
+};
+
+// Salvage — You may kill up to one gear. Draw 1.
+// MVP: auto-kills your first gear (the "may" is simplified).
+REGISTRY["69bc5bd3d308c64675ca87ad"] = {
+  spell: {
+    describe: "Kill one of your gear (optional), draw 1",
+    target: { kind: "none" },
+    resolve: (state, casterId) => {
+      killFirstGear(state, casterId);
+      drawCardsFor(state, casterId, 1);
+    },
+  },
+};
+
+// Stacked Deck — Look at top 3 cards; put 1 in hand, recycle the rest.
+// MVP: auto-takes the highest-energy card from the top 3.
+REGISTRY["69bc5bd0d308c64675ca877f"] = {
+  spell: {
+    describe: "Look at top 3; keep 1, recycle rest",
+    target: { kind: "none" },
+    resolve: (state, casterId) => {
+      const p = findPlayer(state, casterId);
+      const top = p.mainDeck.splice(0, 3);
+      if (top.length === 0) return;
+      top.sort((a, b) => {
+        const ea = CARDS_BY_ID[a.defId]?.energy ?? 0;
+        const eb = CARDS_BY_ID[b.defId]?.energy ?? 0;
+        return eb - ea;
+      });
+      const kept = top.splice(0, 1)[0];
+      kept.zone = "hand";
+      p.hand.push(kept);
+      for (const c of top) {
+        c.zone = "trash";
+        p.trash.push(c);
+      }
+      logEvent(
+        state,
+        `${p.name} uses Stacked Deck: keeps ${CARDS_BY_ID[kept.defId]?.name ?? "a card"}.`,
+      );
+    },
+  },
+};
+
+// ---- any_unit target spells ------------------------------------------------
+
+// Stupefy — Give a unit -1 Might this turn (min 1). Draw 1.
+REGISTRY["69bc5bccd308c64675ca871f"] = {
+  spell: {
+    describe: "Give a unit -1 Might this turn; draw 1",
+    target: { kind: "any_unit" },
+    resolve: (state, casterId, targetUid) => {
+      if (targetUid) tempBuffUnit(state, targetUid, -1);
+      drawCardsFor(state, casterId, 1);
+    },
+  },
+};
+
+// Cleave — Give a unit +3 Might this turn (represents [Assault 3]).
+REGISTRY["69bc5bc6d308c64675ca86b9"] = {
+  spell: {
+    describe: "Give a unit +3 Might this turn (Assault 3)",
+    target: { kind: "any_unit" },
+    resolve: (state, _casterId, targetUid) => {
+      if (targetUid) tempBuffUnit(state, targetUid, 3);
+    },
+  },
+};
+
+// Challenge — Two units deal Might damage to each other.
+// MVP: pick enemy unit; your highest-Might unit at same BF fights it.
+REGISTRY["69bc5bcdd308c64675ca8743"] = {
+  spell: {
+    describe: "Pick enemy unit; your strongest at same BF fights it",
+    target: { kind: "enemy_unit_at_battlefield" },
+    resolve: (state, casterId, targetUid) => {
+      if (!targetUid) return;
+      const opp = findOpponent(state, casterId);
+      const enemyUnit = opp.base.units.find((u) => u.uid === targetUid);
+      if (!enemyUnit?.battlefieldId) return;
+      const me = findPlayer(state, casterId);
+      // Find allied unit with highest Might at same BF
+      const allied = me.base.units
+        .filter((u) => u.battlefieldId === enemyUnit.battlefieldId)
+        .sort((a, b) => getMight(b) - getMight(a))[0];
+      if (!allied) {
+        logEvent(state, `Challenge: no friendly unit at that battlefield.`);
+        return;
+      }
+      const enemyMight = getMight(enemyUnit);
+      const alliedMight = getMight(allied);
+      dealDamageToUnit(state, enemyUnit.uid, alliedMight);
+      dealDamageToUnit(state, allied.uid, enemyMight);
+      logEvent(
+        state,
+        `Challenge: ${CARDS_BY_ID[allied.defId]?.name} vs ${CARDS_BY_ID[enemyUnit.defId]?.name}.`,
+      );
+    },
+  },
+};
+
+// ---- friendly_unit target spells -------------------------------------------
+
+// En Garde — Give a friendly unit +1 Might this turn.
+// If it's the only unit you control at that BF, +1 more.
+REGISTRY["69bc5bc9d308c64675ca86e9"] = {
+  spell: {
+    describe: "Friendly unit: +1 Might (+1 more if alone at its BF)",
+    target: { kind: "friendly_unit" },
+    resolve: (state, casterId, targetUid) => {
+      if (!targetUid) return;
+      const me = findPlayer(state, casterId);
+      const u = me.base.units.find((x) => x.uid === targetUid);
+      if (!u) return;
+      let bonus = 1;
+      if (u.battlefieldId) {
+        const allies = me.base.units.filter(
+          (x) => x.battlefieldId === u.battlefieldId,
+        );
+        if (allies.length === 1) bonus = 2;
+      }
+      tempBuffUnit(state, targetUid, bonus);
+    },
+  },
+};
+
+// Retreat — Return a friendly unit to hand. Channel 1 rune exhausted.
+REGISTRY["69bc5bccd308c64675ca8728"] = {
+  spell: {
+    describe: "Return friendly unit to hand; channel 1 rune exhausted",
+    target: { kind: "friendly_unit" },
+    resolve: (state, casterId, targetUid) => {
+      if (targetUid) returnUnitToHand(state, targetUid);
+      channelRunes(state, casterId, 1, true);
+    },
+  },
+};
+
+// Ride the Wind — Move a friendly unit to base and ready it.
+REGISTRY["69bc5bd0d308c64675ca8775"] = {
+  spell: {
+    describe: "Recall a friendly unit to base and ready it",
+    target: { kind: "friendly_unit" },
+    resolve: (state, _casterId, targetUid) => {
+      if (!targetUid) return;
+      recallUnit(state, targetUid);
+      readyUnit(state, targetUid);
+    },
+  },
+};
+
+// Showstopper — Buff a friendly unit in your base; move it to a battlefield.
+// MVP: auto-targets first available uncontrolled or contested BF.
+REGISTRY["69bc5bd5d308c64675ca87df"] = {
+  spell: {
+    describe: "Buff a base unit (+1 Might) and move it to a battlefield",
+    target: { kind: "friendly_unit_at_base" },
+    resolve: (state, casterId, targetUid) => {
+      if (!targetUid) return;
+      const me = findPlayer(state, casterId);
+      const u = me.base.units.find((x) => x.uid === targetUid);
+      if (!u) return;
+      tempBuffUnit(state, targetUid, 1);
+      // Move to best available BF
+      const targetBf =
+        state.battlefields.find((b) => b.controllerId !== casterId) ??
+        state.battlefields[0];
+      if (targetBf) {
+        u.battlefieldId = targetBf.uid;
+        u.exhausted = true;
+        logEvent(
+          state,
+          `Showstopper: ${CARDS_BY_ID[u.defId]?.name} buffed and deployed to ${CARDS_BY_ID[targetBf.defId]?.name ?? "battlefield"}.`,
+        );
+      }
+    },
+  },
+};
+
+// ---- enemy_unit target spells ----------------------------------------------
+
+// Gust — Return a unit at a battlefield with 3 or less Might to its owner's hand.
+REGISTRY["69bc5bd0d308c64675ca8771"] = {
+  spell: {
+    describe: "Return an enemy unit (≤3 Might at BF) to its owner's hand",
+    target: { kind: "enemy_unit_at_battlefield" },
+    resolve: (state, casterId, targetUid) => {
+      if (!targetUid) return;
+      const opp = findOpponent(state, casterId);
+      const u = opp.base.units.find((x) => x.uid === targetUid);
+      if (!u || !u.battlefieldId) return;
+      if (getMight(u) > 3) {
+        logEvent(state, `Gust: target has more than 3 Might — no effect.`);
+        return;
+      }
+      returnUnitToHand(state, targetUid);
+    },
+  },
+};
+
+// Charm — Move an enemy unit back to its owner's base.
+REGISTRY["69bc5bc9d308c64675ca86e6"] = {
+  spell: {
+    describe: "Move an enemy unit back to its owner's base",
+    target: { kind: "enemy_unit" },
+    resolve: (state, casterId, targetUid) => {
+      if (!targetUid) return;
+      const opp = findOpponent(state, casterId);
+      const u = opp.base.units.find((x) => x.uid === targetUid);
+      if (!u) return;
+      recallUnit(state, targetUid);
+    },
+  },
+};
+
+// ---- unit_at_battlefield target spells --------------------------------------
+
+// Hextech Ray — Deal 3 to a unit at a battlefield.
+REGISTRY["69bc5bc7d308c64675ca86bf"] = {
+  spell: {
+    describe: "Deal 3 to a unit at a battlefield",
+    target: { kind: "unit_at_battlefield" },
+    resolve: (state, _casterId, targetUid) => {
+      if (targetUid) dealDamageToUnit(state, targetUid, 3);
+    },
+  },
+};
+
+// ---- battlefield target spells ---------------------------------------------
+
+// Siphon Power — Choose a battlefield.
+// Friendly units there +1 Might / enemy units there -1 Might this turn.
+REGISTRY["69bc5bd5d308c64675ca87db"] = {
+  spell: {
+    describe: "Choose BF: friendly units +1 Might, enemy units -1 Might this turn",
+    target: { kind: "battlefield" },
+    resolve: (state, casterId, targetUid) => {
+      if (!targetUid) return;
+      for (const pl of state.players) {
+        for (const u of pl.base.units) {
+          if (u.battlefieldId !== targetUid) continue;
+          tempBuffUnit(state, u.uid, pl.id === casterId ? 1 : -1);
+        }
+      }
+      logEvent(state, `Siphon Power on ${CARDS_BY_ID[targetUid]?.name ?? "battlefield"}.`);
+    },
+  },
+};
+
+// ============================================================================
+// BATTLEFIELDS — triggered and static abilities
+// ============================================================================
+
+// The Grand Plaza — "When you hold here, if you have 7+ units here, you win."
+REGISTRY["69bc5befd308c64675ca89bf"] = {
+  triggers: [
+    {
+      kind: "onHoldHere",
+      predicate: (ctx) => {
+        const data = ctx.data ?? {};
+        const bfUid = data.bfUid as string;
+        if (!bfUid) return false;
+        // Find the Grand Plaza battlefield
+        const bf = ctx.state.battlefields.find(
+          (b) => b.defId === "69bc5befd308c64675ca89bf",
+        );
+        if (!bf || bf.uid !== bfUid) return false;
+        // Count holder's units at this BF
+        const holderId = data.playerId as string;
+        const p = findPlayer(ctx.state, holderId);
+        const count = p.base.units.filter(
+          (u) => u.battlefieldId === bfUid,
+        ).length;
+        return count >= 7;
+      },
+      describe: () => "The Grand Plaza: 7+ units while holding → win!",
+      resolve: (ctx) => {
+        const data = ctx.data ?? {};
+        const holderId = data.playerId as string;
+        ctx.state.winnerId = holderId;
+        logEvent(
+          ctx.state,
+          `The Grand Plaza — ${findPlayer(ctx.state, holderId).name} wins with 7+ units!`,
+        );
+      },
+    },
+  ],
+};
+
+// Aspirant's Climb — "Increase the points needed to win the game by 1."
+// Static modifier applied at game creation (see engine.ts createGame).
+// No runtime trigger needed; entry kept for reference.
+REGISTRY["69bc5befd308c64675ca89c0"] = {};
 
 export function getAbilities(defId: string): CardAbilities | undefined {
   return REGISTRY[defId];
