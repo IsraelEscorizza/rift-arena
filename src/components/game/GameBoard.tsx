@@ -12,6 +12,7 @@ import {
 } from "@/lib/game/types";
 import { CARDS_BY_ID, getDomainHex } from "@/lib/cards/database";
 import {
+  canActivateCard,
   canActivateLegend,
   canPassShowdown,
   canPlayCard,
@@ -61,6 +62,7 @@ export function GameBoard() {
   const recycleRune = useGameStore((s) => s.recycleRune);
   const moveMany = useGameStore((s) => s.standardMoveMultiple);
   const doPassShowdown = useGameStore((s) => s.passShowdown);
+  const doActivateCard = useGameStore((s) => s.activateCard);
 
   const [selected, setSelected] = useState<string[]>([]);
 
@@ -87,6 +89,14 @@ export function GameBoard() {
       return;
     }
     if (unit.controllerId !== human.id) return;
+    // Gear cards use activated abilities instead of movement
+    const def = CARDS_BY_ID[unit.defId];
+    if (def?.type === "Gear") {
+      if (canActivateCard(state!, human.id, unit.uid)) {
+        doActivateCard(unit.uid);
+      }
+      return;
+    }
     if (unit.exhausted) return;
     toggleSelect(unit.uid);
   }
@@ -252,6 +262,9 @@ export function GameBoard() {
                   label="Your base"
                   size="md"
                   selectedUids={selected}
+                  activatableUids={human.base.gear
+                    .filter((g) => canActivateCard(state, human.id, g.uid))
+                    .map((g) => g.uid)}
                   onUnitClick={handleUnitClick}
                   onZoneClick={() => moveSelectionTo(null)}
                   highlightOnSelection={
@@ -899,6 +912,7 @@ function UnitsRow({
   label,
   size,
   selectedUids,
+  activatableUids,
   onUnitClick,
   onZoneClick,
   highlightOnSelection,
@@ -907,6 +921,7 @@ function UnitsRow({
   label: string;
   size: "sm" | "md";
   selectedUids?: string[];
+  activatableUids?: string[];
   onUnitClick?: (u: CardInstance) => void;
   onZoneClick?: () => void;
   highlightOnSelection?: boolean;
@@ -936,6 +951,7 @@ function UnitsRow({
               card={u}
               size={size}
               selected={selectedUids?.includes(u.uid)}
+              highlighted={activatableUids?.includes(u.uid)}
             />
           </div>
         ))}

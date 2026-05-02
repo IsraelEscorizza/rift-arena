@@ -1201,6 +1201,48 @@ export function getLegendActivationLabel(
   return abilities.activated[0].describe(state, playerId);
 }
 
+// ----------------------- gear / card activated abilities -----------------------
+
+export function canActivateCard(
+  state: GameState,
+  playerId: string,
+  cardUid: string,
+): boolean {
+  if (state.winnerId) return false;
+  const p = getPlayer(state, playerId);
+  const gear = p.base.gear.find((g) => g.uid === cardUid);
+  if (!gear) return false;
+  const abilities = getAbilities(gear.defId);
+  if (!abilities?.activated?.length) return false;
+  return abilities.activated[0].canActivate(state, playerId);
+}
+
+export function activateCard(state: GameState, cardUid: string): GameState {
+  if (state.winnerId) return state;
+  let ownerId: string | null = null;
+  for (const p of state.players) {
+    if (p.base.gear.find((g) => g.uid === cardUid)) {
+      ownerId = p.id;
+      break;
+    }
+  }
+  if (!ownerId) return state;
+  const p = getPlayer(state, ownerId);
+  const gear = p.base.gear.find((g) => g.uid === cardUid)!;
+  const abilities = getAbilities(gear.defId);
+  if (!abilities?.activated?.length) {
+    log(state, `${gear.defId} has no activated ability.`);
+    return state;
+  }
+  const ab = abilities.activated[0];
+  if (!ab.canActivate(state, ownerId)) {
+    log(state, `Cannot activate ${gear.defId} right now.`);
+    return state;
+  }
+  ab.resolve(state, ownerId);
+  return state;
+}
+
 // ----------------------- spell target resolution -----------------------
 
 export function isValidSpellTarget(

@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import {
+  activateCard,
   activateLegend,
   attemptPlayCard,
   cancelPendingPlay,
@@ -72,6 +73,8 @@ interface GameStore {
   passShowdown: (playerId: string) => void;
   /** Complete this player's mulligan. setAside is up to 2 card uids to replace. */
   finalizeMulligan: (playerId: string, setAside: string[]) => void;
+  /** Activate an in-play card's activated ability (e.g. Gear exhaust abilities). */
+  activateCard: (uid: string) => void;
   reset: () => void;
 }
 
@@ -219,6 +222,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const cur = get().state;
     if (!cur) return;
     set({ state: finalizeMulligan(clone(cur), playerId, setAside) });
+  },
+  activateCard: (uid) => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: activateCard(clone(cur), uid) });
   },
   reset: () => set({ state: null, match: null }),
 }));

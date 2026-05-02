@@ -760,6 +760,102 @@ REGISTRY[OGS.Flash] = {
 REGISTRY[OGS.Highlander] = {};
 REGISTRY[OGS.GentlemensDuel] = {};
 
+// ============================================================================
+// GEAR — activated abilities
+// ============================================================================
+
+// Factory: Seal of <Domain> — Exhaust: [Reaction] Add 1 <domain> power.
+// Used by all 6 domain Seals across OGN, SFD, and Overnumbered variants.
+function makeSealAbility(cardId: string, domain: import("../types").Domain): CardAbilities {
+  function hasReady(state: GameState, controllerId: string) {
+    const p = findPlayer(state, controllerId);
+    return p.base.gear.some((g) => g.defId === cardId && !g.exhausted);
+  }
+
+  return {
+    activated: [
+      {
+        describe: () => `Exhaust → +1 ${domain} power`,
+        computeCost: () => ({ exhaustSelf: true }),
+        canActivate: (state, controllerId) => {
+          const inShowdown = state.combat?.step === "showdown";
+          if (inShowdown) {
+            if (state.combat?.showdownFocusId !== controllerId) return false;
+          } else {
+            if (state.phase !== "main") return false;
+            if (state.turnPlayerId !== controllerId) return false;
+          }
+          return hasReady(state, controllerId);
+        },
+        resolve: (state, controllerId) => {
+          const p = findPlayer(state, controllerId);
+          const gear = p.base.gear.find((g) => g.defId === cardId && !g.exhausted);
+          if (!gear) return;
+          gear.exhausted = true;
+          addPower(state, controllerId, domain, 1);
+          logEvent(state, `${p.name} activates ${CARDS_BY_ID[cardId]?.name ?? "Seal"}: +1 ${domain} power.`);
+        },
+      },
+    ],
+  };
+}
+
+// Factory: Energy Conduit variant — Exhaust: [Reaction] Add 1 Energy.
+function makeEnergyAbility(cardId: string): CardAbilities {
+  function hasReady(state: GameState, controllerId: string) {
+    const p = findPlayer(state, controllerId);
+    return p.base.gear.some((g) => g.defId === cardId && !g.exhausted);
+  }
+
+  return {
+    activated: [
+      {
+        describe: () => "Exhaust → +1 Energy",
+        computeCost: () => ({ exhaustSelf: true }),
+        canActivate: (state, controllerId) => {
+          const inShowdown = state.combat?.step === "showdown";
+          if (inShowdown) {
+            if (state.combat?.showdownFocusId !== controllerId) return false;
+          } else {
+            if (state.phase !== "main") return false;
+            if (state.turnPlayerId !== controllerId) return false;
+          }
+          return hasReady(state, controllerId);
+        },
+        resolve: (state, controllerId) => {
+          const p = findPlayer(state, controllerId);
+          const gear = p.base.gear.find((g) => g.defId === cardId && !g.exhausted);
+          if (!gear) return;
+          gear.exhausted = true;
+          p.pool.energy += 1;
+          logEvent(state, `${p.name} activates ${CARDS_BY_ID[cardId]?.name ?? "Energy Conduit"}: +1 Energy.`);
+        },
+      },
+    ],
+  };
+}
+
+// Seal of Unity (OGN + SFD overnumbered)
+REGISTRY["69bc5bd4d308c64675ca87c5"] = makeSealAbility("69bc5bd4d308c64675ca87c5", "Order");
+REGISTRY["69bc5be3d308c64675ca88e9"] = makeSealAbility("69bc5be3d308c64675ca88e9", "Order");
+// Seal of Rage (OGN + SFD overnumbered)
+REGISTRY["69bc5bc8d308c64675ca86e1"] = makeSealAbility("69bc5bc8d308c64675ca86e1", "Fury");
+REGISTRY["69bc5be4d308c64675ca88ed"] = makeSealAbility("69bc5be4d308c64675ca88ed", "Fury");
+// Seal of Focus / Calm (OGN + SFD overnumbered)
+REGISTRY["69bc5bcbd308c64675ca8710"] = makeSealAbility("69bc5bcbd308c64675ca8710", "Calm");
+REGISTRY["69bc5bdcd308c64675ca8861"] = makeSealAbility("69bc5bdcd308c64675ca8861", "Calm");
+// Seal of Insight / Mind (OGN + SFD overnumbered)
+REGISTRY["69bc5bcdd308c64675ca8739"] = makeSealAbility("69bc5bcdd308c64675ca8739", "Mind");
+REGISTRY["69bc5be4d308c64675ca88ea"] = makeSealAbility("69bc5be4d308c64675ca88ea", "Mind");
+// Seal of Strength / Body (OGN + SFD overnumbered)
+REGISTRY["69bc5bcfd308c64675ca8769"] = makeSealAbility("69bc5bcfd308c64675ca8769", "Body");
+REGISTRY["69bc5bdcd308c64675ca8862"] = makeSealAbility("69bc5bdcd308c64675ca8862", "Body");
+// Seal of Discord / Chaos (OGN + SFD overnumbered)
+REGISTRY["69bc5bd2d308c64675ca8797"] = makeSealAbility("69bc5bd2d308c64675ca8797", "Chaos");
+REGISTRY["69bc5bdcd308c64675ca8859"] = makeSealAbility("69bc5bdcd308c64675ca8859", "Chaos");
+// Energy Conduit (OGN)
+REGISTRY["69bc5bccd308c64675ca8722"] = makeEnergyAbility("69bc5bccd308c64675ca8722");
+
 export function getAbilities(defId: string): CardAbilities | undefined {
   return REGISTRY[defId];
 }
