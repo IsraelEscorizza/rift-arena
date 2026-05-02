@@ -1,4 +1,4 @@
-// Riftbound TCG engine — MVP implementation of official rules.
+// Riftbound TCG engine — implements official rules.
 //
 // Implemented:
 // - Two players, 8 victory points, 2 battlefields
@@ -6,15 +6,11 @@
 // - Phases: Awaken / Beginning(scoring=Hold) / Channel / Draw / Main / Ending
 // - Energy + Power resource pool, basic runes (tap=Energy, recycle=Power)
 // - Standard Move: exhaust unit to move base ↔ battlefield
-// - Combat at contested battlefields: sum-Might damage assignment, Tank/Backline ordering, Shield/Assault
+// - Combat Showdown: action window before damage; Action/Reaction cards playable
+// - Combat damage: sum-Might, Tank/Backline ordering, Shield/Assault, Deathknell
 // - Scoring: Conquer (gain control) + Hold (maintain at Beginning)
-// - Burn Out replacement when deck empty
-//
-// Not implemented (TODO):
-// - FEPR chain with Action/Reaction speeds
-// - Triggered abilities (only Vision sketched)
-// - Card-specific rules text effects beyond keywords
-// - Equip/attach mechanics for Gear
+// - Burn Out when deck empty
+// - Mulligan: set aside up to 2 cards at game start, draw replacements
 
 import { nanoid } from "nanoid";
 import {
@@ -24,6 +20,7 @@ import {
   DeckList,
   Domain,
   GameState,
+  MulliganState,
   PlayerState,
   ResourcePool,
   RuneInstance,
@@ -35,7 +32,7 @@ import { isMighty } from "./abilities/effects";
 
 const VICTORY_SCORE = 8;
 const STARTING_HAND = 4;
-const BATTLEFIELDS_PER_GAME = 2;
+const MULLIGAN_MAX = 2;
 
 const DOMAINS_ALL: Domain[] = [
   "Fury",
@@ -53,7 +50,7 @@ function emptyPool(): ResourcePool {
   return { energy: 0, power };
 }
 
-function shuffle<T>(arr: T[]): T[] {
+export function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -62,7 +59,7 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-function newCardInstance(defId: string, ownerId: string): CardInstance {
+export function newCardInstance(defId: string, ownerId: string): CardInstance {
   return {
     uid: nanoid(8),
     defId,
@@ -77,7 +74,7 @@ function newCardInstance(defId: string, ownerId: string): CardInstance {
   };
 }
 
-function newRuneInstance(defId: string, ownerId: string): RuneInstance {
+export function newRuneInstance(defId: string, ownerId: string): RuneInstance {
   const def = CARDS_BY_ID[defId];
   return {
     uid: nanoid(8),
@@ -114,7 +111,6 @@ function buildPlayer(id: string, name: string, deck: DeckList): PlayerState {
     chosen = main.splice(idx, 1)[0];
     chosen.zone = "champion_zone";
   } else {
-    // Build a champion instance directly
     chosen = newCardInstance(deck.chosenChampionId, id);
     chosen.zone = "champion_zone";
   }
@@ -166,8 +162,6 @@ export function createGame(
   const p1 = buildPlayer("p1", p1Name, p1Deck);
   const p2 = buildPlayer("p2", p2Name, p2Deck);
 
-  // Battlefield selection: per official rules each player picks 1 of their 3.
-  // If picks not provided, fall back to random (Duel mode).
   const bfDefs: Record<string, CardDefinition> = {};
   const battlefields: BattlefieldInstance[] = [];
   let p1Pick = pickedBattlefieldIds?.p1;
@@ -201,10 +195,11 @@ export function createGame(
     pendingPlay: null,
     pendingSpellTarget: null,
     delayedEffects: [],
+    mulliganState: null,
   };
 
-  // Run start-of-game phases automatically
-  enterPhase(state, "awaken");
+  // Initialize mulligan before starting phases
+  initMulligan(state);
   return state;
 }
 
@@ -229,11 +224,6 @@ export function findCard(state: GameState, uid: string): CardInstance | null {
     for (const g of p.base.gear) if (g.uid === uid) return g;
     if (p.championZone?.uid === uid) return p.championZone;
   }
-  // Battlefield zones
-  for (const p of state.players) {
-    // Units at battlefields are stored on the player who controls them, but we use base for base only.
-    // For simplicity in MVP, we keep units that moved to a BF in p.base.units with battlefieldId.
-  }
   return null;
 }
 
@@ -257,7 +247,6 @@ function getMight(card: CardInstance): number {
   let m = def.might ?? 0;
   m += card.buffCount;
   m += card.tempMightThisTurn ?? 0;
-  // Assault adds while attacker; we apply it during combat resolution, not here.
   return m;
 }
 
@@ -274,6 +263,70 @@ function unitsAtBattlefield(
   return out;
 }
 
+// Returns whether the game is currently in a state that blocks normal play
+function isInCombatShowdown(state: GameState): boolean {
+  return state.combat?.step === "showdown";
+}
+
+// ---------------- mulligan ----------------
+
+function initMulligan(state: GameState): void {
+  state.mulliganState = {
+    players: state.players.map((p) => ({
+      id: p.id,
+      setAside: [],
+      done: false,
+    })),
+  };
+  log(state, `Mulligan: each player may set aside up to ${MULLIGAN_MAX} cards.`);
+}
+
+export function finalizeMulligan(
+  state: GameState,
+  playerId: string,
+  setAsideUids: string[],
+): GameState {
+  if (!state.mulliganState) return state;
+  const ms = state.mulliganState.players.find((p) => p.id === playerId);
+  if (!ms || ms.done) return state;
+
+  const player = getPlayer(state, playerId);
+  const capped = setAsideUids.slice(0, MULLIGAN_MAX);
+
+  // Remove chosen cards from hand
+  const setAsideCards: CardInstance[] = [];
+  for (const uid of capped) {
+    const idx = player.hand.findIndex((c) => c.uid === uid);
+    if (idx >= 0) {
+      setAsideCards.push(player.hand.splice(idx, 1)[0]);
+    }
+  }
+
+  // Draw replacements first, then recycle set-aside cards
+  drawCards(state, playerId, setAsideCards.length);
+
+  for (const c of setAsideCards) {
+    c.zone = "main_deck";
+    // Per rules: recycled (go to bottom of main deck)
+    player.mainDeck.push(c);
+  }
+
+  ms.done = true;
+  log(
+    state,
+    `${player.name} mulligans ${setAsideCards.length} card${setAsideCards.length !== 1 ? "s" : ""}.`,
+  );
+
+  // If all players done, end mulligan and start first turn
+  if (state.mulliganState.players.every((p) => p.done)) {
+    state.mulliganState = null;
+    log(state, `Mulligan complete — game begins.`);
+    enterPhase(state, "awaken");
+  }
+
+  return state;
+}
+
 // ---------------- phases ----------------
 
 export function enterPhase(state: GameState, phase: GameState["phase"]) {
@@ -281,26 +334,21 @@ export function enterPhase(state: GameState, phase: GameState["phase"]) {
   const active = getPlayer(state, state.turnPlayerId);
   switch (phase) {
     case "awaken":
-      // Ready everything (units, gear, runes, legend) at active player's locations
       for (const u of active.base.units) u.exhausted = false;
       for (const g of active.base.gear) g.exhausted = false;
       for (const r of active.base.runes) r.exhausted = false;
       active.legendExhausted = false;
-      // Reset enteredThisTurn
       for (const u of active.base.units) u.enteredThisTurn = false;
       log(state, `${active.name}: Awaken Phase.`);
       enterPhase(state, "beginning");
       break;
     case "beginning":
-      // Reset scored battlefields tracker each turn for active player
       for (const bf of state.battlefields) {
         bf.scoredByThisTurn = bf.scoredByThisTurn.filter(
           (id) => id !== active.id,
         );
       }
-      // Beginning Step triggers (before scoring)
       emitTrigger(state, "atBeginningStart", { playerId: active.id });
-      // Scoring step: Hold all controlled battlefields
       for (const bf of state.battlefields) {
         if (bf.controllerId === active.id) {
           score(state, active.id, bf.uid, "Hold");
@@ -323,11 +371,8 @@ export function enterPhase(state: GameState, phase: GameState["phase"]) {
       break;
     }
     case "draw":
-      // Per official rules, only 3+ player modes skip first draw for the going-first player.
-      // In 1v1 (Duel/Match) the first player draws normally on turn 1.
       drawCards(state, active.id, 1);
       log(state, `${active.name}: Draw Phase.`);
-      // End of Draw Phase: empty rune pools (per rule 313)
       for (const p of state.players) p.pool = emptyPool();
       enterPhase(state, "main");
       break;
@@ -338,16 +383,13 @@ export function enterPhase(state: GameState, phase: GameState["phase"]) {
     case "ending":
       log(state, `${active.name}: Ending Phase.`);
       emitTrigger(state, "atEndOfTurn", { playerId: active.id });
-      // Heal all units, expire 'this turn' effects, empty rune pools
       for (const p of state.players) {
         for (const u of p.base.units) {
           u.damage = 0;
-          // Reset "this turn" temp might
           (u as any).tempMightThisTurn = 0;
         }
         p.pool = emptyPool();
       }
-      // Pass turn
       const next = getOpponent(state, state.turnPlayerId);
       state.turnPlayerId = next.id;
       state.priorityPlayerId = next.id;
@@ -360,6 +402,12 @@ export function enterPhase(state: GameState, phase: GameState["phase"]) {
 
 export function nextPhase(state: GameState): GameState {
   if (state.winnerId) return state;
+  // Cannot end turn during mulligan or a combat showdown
+  if (state.mulliganState) return state;
+  if (isInCombatShowdown(state)) {
+    log(state, `Cannot end turn during a Showdown.`);
+    return state;
+  }
   if (state.phase === "main") {
     enterPhase(state, "ending");
   }
@@ -384,11 +432,9 @@ export function drawCards(state: GameState, playerId: string, n: number) {
 
 function burnOut(state: GameState, playerId: string) {
   const p = getPlayer(state, playerId);
-  // Recycle trash → main deck
   for (const c of p.trash) c.zone = "main_deck";
   p.mainDeck = shuffle([...p.mainDeck, ...p.trash]);
   p.trash = [];
-  // Opponent gains 1 point
   const opp = getOpponent(state, playerId);
   log(state, `${p.name} burns out — ${opp.name} gains 1 point.`);
   addPoints(state, opp.id, 1, true);
@@ -401,12 +447,17 @@ export function tapRuneForEnergy(state: GameState, runeUid: string): GameState {
   if (!r) return state;
   if (r.exhausted) return state;
   if (r.zone !== "base") return state;
-  if (r.ownerId !== state.turnPlayerId) return state;
+
+  // During a combat showdown, the focus player may tap runes (rune tap is a Reaction)
+  const allowedId = isInCombatShowdown(state)
+    ? state.combat!.showdownFocusId
+    : state.turnPlayerId;
+  if (r.ownerId !== allowedId) return state;
+
   r.exhausted = true;
   const p = getPlayer(state, r.ownerId);
   p.pool.energy += 1;
   log(state, `${p.name} taps ${CARDS_BY_ID[r.defId]?.name ?? "rune"} for [1].`);
-  // Pending play accounting
   if (state.pendingPlay) {
     state.pendingPlay.energyLeft = Math.max(0, state.pendingPlay.energyLeft - 1);
     tryFinalizePending(state);
@@ -419,10 +470,11 @@ export function canUntapRune(state: GameState, runeUid: string): boolean {
   if (!r) return false;
   if (!r.exhausted) return false;
   if (r.zone !== "base") return false;
-  if (r.ownerId !== state.turnPlayerId) return false;
+  const allowedId = isInCombatShowdown(state)
+    ? state.combat!.showdownFocusId
+    : state.turnPlayerId;
+  if (r.ownerId !== allowedId) return false;
   if (state.phase !== "main") return false;
-  // Only refundable if there's still at least 1 energy in the pool
-  // (i.e. the [1] generated by the tap hasn't been spent yet).
   const p = getPlayer(state, r.ownerId);
   return p.pool.energy >= 1;
 }
@@ -441,23 +493,24 @@ export function recycleRuneForPower(state: GameState, runeUid: string): GameStat
   const r = findRune(state, runeUid);
   if (!r) return state;
   if (r.zone !== "base") return state;
-  if (r.ownerId !== state.turnPlayerId) return state;
+
+  const allowedId = isInCombatShowdown(state)
+    ? state.combat!.showdownFocusId
+    : state.turnPlayerId;
+  if (r.ownerId !== allowedId) return state;
+
   const p = getPlayer(state, r.ownerId);
-  // Remove rune from base, send to bottom of rune deck
   p.base.runes = p.base.runes.filter((x) => x.uid !== runeUid);
   r.zone = "rune_deck";
   r.exhausted = false;
   p.runeDeck.push(r);
-  // Add 1 power of rune's domain (or any if Colorless)
   const domain = r.domain;
   if (domain === "Colorless") {
-    // Add as universal — store in 'Colorless' bucket
     p.pool.power.Colorless += 1;
   } else {
     p.pool.power[domain] += 1;
   }
   log(state, `${p.name} recycles rune for [${domain[0]}].`);
-  // Pending play accounting
   if (state.pendingPlay) {
     const pp = state.pendingPlay;
     if (pp.neededDomains.includes(domain) || domain === "Colorless") {
@@ -474,9 +527,6 @@ function canPayCost(
   powerCost: number,
   domains: Domain[],
 ): boolean {
-  // Power cost: powerCost is total power symbols. In Riftbound the symbols are typed by domain.
-  // Riftcodex API gives `power` as a flat number; we treat it as: must spend `powerCost` Power chips,
-  // each chip must be of a matching domain (any of the card's domains) OR Colorless (universal).
   const colorless = pool.power.Colorless ?? 0;
   let availableMatching = colorless;
   for (const d of domains) {
@@ -484,7 +534,6 @@ function canPayCost(
     availableMatching += pool.power[d] ?? 0;
   }
   if (availableMatching < powerCost) return false;
-  // Energy: pay with energy in pool (or convert remaining power as in real rules? We keep separate.)
   if (pool.energy < energyCost) return false;
   return true;
 }
@@ -495,9 +544,7 @@ function payCost(
   powerCost: number,
   domains: Domain[],
 ) {
-  // Spend Energy
   pool.energy -= energyCost;
-  // Spend Power: prefer matching-domain chips first, fall back to Colorless
   let remaining = powerCost;
   for (const d of domains) {
     if (d === "Colorless") continue;
@@ -516,15 +563,29 @@ function payCost(
 
 export function canPlayCard(state: GameState, uid: string): boolean {
   if (state.winnerId) return false;
-  if (state.phase !== "main") return false;
+  if (state.mulliganState) return false;
+
   const card = findCard(state, uid);
   if (!card) return false;
   if (card.zone !== "hand" && card.zone !== "champion_zone") return false;
-  if (card.ownerId !== state.turnPlayerId) return false;
+
   const def = CARDS_BY_ID[card.defId];
+
+  if (isInCombatShowdown(state)) {
+    // Only the focus player may play cards during the showdown window
+    if (card.ownerId !== state.combat!.showdownFocusId) return false;
+    // Only Action or Reaction keyword cards are playable during a Showdown
+    if (!def.keywords.includes("Action") && !def.keywords.includes("Reaction")) {
+      return false;
+    }
+  } else {
+    if (state.phase !== "main") return false;
+    if (card.ownerId !== state.turnPlayerId) return false;
+  }
+
+  const player = getPlayer(state, card.ownerId);
   const energy = def.energy ?? 0;
   const power = def.power ?? 0;
-  const player = getPlayer(state, card.ownerId);
   return canPayCost(player.pool, energy, power, def.domains);
 }
 
@@ -535,14 +596,8 @@ export function playCard(state: GameState, uid: string): GameState {
   const def = CARDS_BY_ID[card.defId];
   const player = getPlayer(state, card.ownerId);
 
-  payCost(
-    player.pool,
-    def.energy ?? 0,
-    def.power ?? 0,
-    def.domains,
-  );
+  payCost(player.pool, def.energy ?? 0, def.power ?? 0, def.domains);
 
-  // Remove from origin zone
   if (card.zone === "hand") {
     player.hand = player.hand.filter((c) => c.uid !== uid);
   } else if (card.zone === "champion_zone") {
@@ -556,7 +611,6 @@ export function playCard(state: GameState, uid: string): GameState {
     card.enteredThisTurn = true;
     player.base.units.push(card);
     log(state, `${player.name} plays unit ${def.name}.`);
-    // Fire onPlayUnit triggers
     emitTrigger(state, "onPlayUnit", { unitUid: card.uid });
     if (isMighty(card)) {
       emitTrigger(state, "onPlayMightyUnit", { unitUid: card.uid });
@@ -567,7 +621,6 @@ export function playCard(state: GameState, uid: string): GameState {
     player.base.gear.push(card);
     log(state, `${player.name} plays gear ${def.name}.`);
   } else if (def.type === "Spell") {
-    // Look up an implemented spell effect
     const ab = getAbilities(def.id);
     if (ab?.spell) {
       log(state, `${player.name} casts ${def.name}: ${ab.spell.describe}.`);
@@ -576,7 +629,6 @@ export function playCard(state: GameState, uid: string): GameState {
         card.zone = "trash";
         player.trash.push(card);
       } else {
-        // Need user target — set pending and DON'T trash yet
         state.pendingSpellTarget = {
           spellUid: card.uid,
           defId: def.id,
@@ -584,7 +636,6 @@ export function playCard(state: GameState, uid: string): GameState {
           targetKind: ab.spell.target.kind,
           description: ab.spell.describe,
         };
-        // Move spell to a temp banishment slot (we'll trash it on resolution)
         card.zone = "banishment";
         player.banishment.push(card);
       }
@@ -593,7 +644,6 @@ export function playCard(state: GameState, uid: string): GameState {
       player.trash.push(card);
       log(state, `${player.name} casts ${def.name} (effects not implemented).`);
     }
-    // Always fire onPlaySpell trigger
     emitTrigger(state, "onPlaySpell", {
       spellDefId: def.id,
       energyCost: def.energy ?? 0,
@@ -615,19 +665,14 @@ export function canStandardMove(
 ): boolean {
   if (state.phase !== "main") return false;
   if (state.combat) return false;
+  if (state.mulliganState) return false;
   const card = findCard(state, unitUid);
   if (!card) return false;
   if (card.controllerId !== state.turnPlayerId) return false;
   if (card.exhausted) return false;
   const def = CARDS_BY_ID[card.defId];
   if (def.type !== "Unit") return false;
-  // Origin must be in player's base (we keep all units there)
   if (card.zone !== "base") return false;
-  // Standard move: base ↔ controlled battlefield (or BF↔BF with Ganking)
-  if (destBfUid !== null) {
-    // Cannot move to a BF with units of 2 OTHER players (only relevant in 3+ players; skip in 1v1)
-    return true;
-  }
   return true;
 }
 
@@ -639,20 +684,11 @@ export function standardMove(
   return standardMoveMultiple(state, [unitUid], destBfUid);
 }
 
-/**
- * Move multiple units to the same destination in one atomic action.
- * Per Riftbound rules (rule 144): "Multiple units can declare Standard Move
- * simultaneously to same destination; origins can differ; costs paid simultaneously."
- *
- * All units are exhausted and placed at destination, THEN contested check runs
- * and combat resolves once at the end (instead of one-at-a-time).
- */
 export function standardMoveMultiple(
   state: GameState,
   unitUids: string[],
   destBfUid: string | null,
 ): GameState {
-  // Validate all of them first; if any invalid, abort the whole batch.
   const movers: { card: CardInstance; def: CardDefinition }[] = [];
   for (const uid of unitUids) {
     if (!canStandardMove(state, uid, destBfUid)) return state;
@@ -664,7 +700,6 @@ export function standardMoveMultiple(
 
   const playerName = getPlayer(state, movers[0].card.controllerId).name;
 
-  // Apply all moves simultaneously
   for (const m of movers) {
     m.card.exhausted = true;
     m.card.battlefieldId = destBfUid ?? undefined;
@@ -680,9 +715,7 @@ export function standardMoveMultiple(
     } else {
       log(
         state,
-        `${playerName} moves ${movers.length} units to ${bfDef.name} (${movers
-          .map((m) => m.def.name)
-          .join(", ")}).`,
+        `${playerName} moves ${movers.length} units to ${bfDef.name} (${movers.map((m) => m.def.name).join(", ")}).`,
       );
     }
   } else {
@@ -693,7 +726,6 @@ export function standardMoveMultiple(
     }
   }
 
-  // Fire onOpponentMove triggers (one per moving unit, for opposing players' units to react)
   for (const m of movers) {
     emitTrigger(state, "onOpponentMove", {
       destBfUid: destBfUid ?? null,
@@ -702,9 +734,8 @@ export function standardMoveMultiple(
     });
   }
 
-  // Check contested + combat ONCE for the whole batch
   checkContested(state);
-  resolveAllPendingCombat(state);
+  initiateContestedActions(state);
   return state;
 }
 
@@ -713,58 +744,112 @@ function checkContested(state: GameState) {
     const units = unitsAtBattlefield(state, bf.uid);
     if (units.length === 0) {
       bf.contested = false;
-      // If no controller and no units, stays uncontrolled
       continue;
     }
     const players = new Set(units.map((u) => u.player.id));
-    // If controller exists and only their units → not contested
     if (bf.controllerId && players.size === 1 && players.has(bf.controllerId)) {
       bf.contested = false;
       continue;
     }
-    // Otherwise contested
     bf.contested = true;
   }
 }
 
-// ---------------- combat ----------------
+/**
+ * After a move, check for contested battlefields and either:
+ * - Establish uncontested control immediately (only one side present)
+ * - Initiate a Combat Showdown (two sides present)
+ */
+function initiateContestedActions(state: GameState) {
+  for (const bf of state.battlefields) {
+    const units = unitsAtBattlefield(state, bf.uid);
+    const playersHere = [...new Set(units.map((u) => u.player.id))];
 
-function resolveAllPendingCombat(state: GameState) {
-  // MVP: walk through contested battlefields. If 2 opposing players have units, run combat.
-  // If only 1 player has units → they conquer.
-  let safety = 0;
-  while (safety++ < 20) {
-    let didSomething = false;
-    for (const bf of state.battlefields) {
-      const units = unitsAtBattlefield(state, bf.uid);
-      const playersHere = new Set(units.map((u) => u.player.id));
-      if (playersHere.size === 0) {
-        if (bf.controllerId !== null && bf.contested) {
-          bf.controllerId = null;
-          log(state, `${state.battlefieldDefs[bf.defId].name} becomes uncontrolled.`);
-        }
-        continue;
-      }
-      if (playersHere.size === 1) {
-        const onlyPlayer = [...playersHere][0];
-        if (bf.controllerId !== onlyPlayer) {
-          // Establish control = Conquer
-          establishControl(state, bf, onlyPlayer);
-          didSomething = true;
-        }
+    if (playersHere.length === 0) {
+      if (bf.controllerId !== null) {
+        bf.controllerId = null;
         bf.contested = false;
-        continue;
+        log(state, `${state.battlefieldDefs[bf.defId].name} becomes uncontrolled.`);
       }
-      // 2+ players present → combat
-      if (playersHere.size === 2) {
-        runCombatAt(state, bf);
-        didSomething = true;
-        if (state.winnerId) return;
-      }
+      continue;
     }
-    if (!didSomething) break;
+
+    if (playersHere.length === 1) {
+      const onlyPlayer = playersHere[0];
+      if (bf.controllerId !== onlyPlayer) {
+        establishControl(state, bf, onlyPlayer);
+      }
+      bf.contested = false;
+      continue;
+    }
+
+    // Two sides present → start Combat Showdown (if not already in one here)
+    if (playersHere.length >= 2 && (!state.combat || state.combat.battlefieldUid !== bf.uid)) {
+      const attackerId =
+        bf.controllerId && playersHere.includes(bf.controllerId)
+          ? playersHere.find((p) => p !== bf.controllerId)!
+          : state.turnPlayerId;
+      const defenderId = playersHere.find((p) => p !== attackerId)!;
+
+      state.combat = {
+        battlefieldUid: bf.uid,
+        attackerId,
+        defenderId,
+        step: "showdown",
+        showdownFocusId: attackerId,
+        showdownPassCount: 0,
+      };
+      const bfName = state.battlefieldDefs[bf.defId]?.name ?? bf.uid;
+      log(
+        state,
+        `⚔️ Combat Showdown at ${bfName}! ${getPlayer(state, attackerId).name} has focus — play an Action card or pass.`,
+      );
+      break; // handle one combat at a time
+    }
   }
 }
+
+// ---------------- combat showdown ----------------
+
+/**
+ * Pass focus during the Combat Showdown.
+ * When both players pass consecutively the damage step executes.
+ */
+export function passShowdown(state: GameState, playerId: string): GameState {
+  if (!state.combat || state.combat.step !== "showdown") return state;
+  if (state.combat.showdownFocusId !== playerId) return state;
+
+  const combat = state.combat;
+  const opp = getOpponent(state, playerId);
+  combat.showdownPassCount++;
+
+  if (combat.showdownPassCount >= 2) {
+    // Both passed — run damage
+    log(state, `Both players passed — combat damage resolves.`);
+    state.combat = null;
+    const bf = state.battlefields.find((b) => b.uid === combat.battlefieldUid);
+    if (bf) runCombatDamage(state, bf, combat.attackerId, combat.defenderId);
+  } else {
+    // Pass focus to the other player
+    combat.showdownFocusId = opp.id;
+    const bfName = state.battlefieldDefs[combat.battlefieldUid]?.name ?? "";
+    log(
+      state,
+      `${getPlayer(state, playerId).name} passes — ${opp.name} has focus at ${bfName}.`,
+    );
+  }
+
+  return state;
+}
+
+export function canPassShowdown(state: GameState, playerId: string): boolean {
+  return (
+    state.combat?.step === "showdown" &&
+    state.combat.showdownFocusId === playerId
+  );
+}
+
+// ---------------- combat damage ----------------
 
 function establishControl(
   state: GameState,
@@ -773,33 +858,27 @@ function establishControl(
 ) {
   bf.controllerId = newControllerId;
   bf.contested = false;
-  // Conquer = score (if not already this turn)
   score(state, newControllerId, bf.uid, "Conquer");
 }
 
-function runCombatAt(state: GameState, bf: BattlefieldInstance) {
+function runCombatDamage(
+  state: GameState,
+  bf: BattlefieldInstance,
+  attackerId: string,
+  defenderId: string,
+) {
   const units = unitsAtBattlefield(state, bf.uid);
-  const playersHere = [...new Set(units.map((u) => u.player.id))];
-  if (playersHere.length !== 2) return;
-
-  // Attacker = player who applied contested = the one who is NOT the current controller (if any),
-  // else the turn player.
-  const attackerId =
-    bf.controllerId && playersHere.includes(bf.controllerId)
-      ? playersHere.find((p) => p !== bf.controllerId)!
-      : state.turnPlayerId;
-  const defenderId = playersHere.find((p) => p !== attackerId)!;
-
   const attackers = units.filter((u) => u.player.id === attackerId);
   const defenders = units.filter((u) => u.player.id === defenderId);
 
-  // Compute Might (base + buff + tempMightThisTurn + Assault/Shield for role + adjacent auras)
+  if (attackers.length === 0 && defenders.length === 0) return;
+
   function effMight(card: CardInstance, role: "attacker" | "defender"): number {
     const def = CARDS_BY_ID[card.defId];
     let m = (def.might ?? 0) + card.buffCount + (card.tempMightThisTurn ?? 0);
     if (role === "attacker") m += def.assault ?? 0;
     if (role === "defender") m += def.shield ?? 0;
-    // Garen - Commander aura: +1 to other friendly units at the same battlefield
+    // Garen - Commander aura
     const garenCommanderId = "69bc5bd9d308c64675ca8822";
     if (card.battlefieldId) {
       const owner = state.players.find((p) =>
@@ -818,33 +897,23 @@ function runCombatAt(state: GameState, bf: BattlefieldInstance) {
     return Math.max(0, m);
   }
 
-  const totalAtk = attackers.reduce(
-    (s, u) => s + effMight(u.unit, "attacker"),
-    0,
-  );
-  const totalDef = defenders.reduce(
-    (s, u) => s + effMight(u.unit, "defender"),
-    0,
-  );
+  const totalAtk = attackers.reduce((s, u) => s + effMight(u.unit, "attacker"), 0);
+  const totalDef = defenders.reduce((s, u) => s + effMight(u.unit, "defender"), 0);
 
-  log(
-    state,
-    `Combat at ${state.battlefieldDefs[bf.defId].name}: attackers ${totalAtk} vs defenders ${totalDef}.`,
-  );
+  const bfName = state.battlefieldDefs[bf.defId]?.name ?? bf.uid;
+  log(state, `Combat at ${bfName}: ${totalAtk} vs ${totalDef}.`);
 
-  // Damage assignment: each side assigns its total to other's units, lethal first, Tank first, Backline last.
   function assignDamage(
     fromTotal: number,
     targets: { unit: CardInstance; player: PlayerState }[],
-    forSide: "attacker" | "defender",
   ) {
     let remaining = fromTotal;
     const sortedTargets = [...targets].sort((a, b) => {
       const ka = CARDS_BY_ID[a.unit.defId].keywords;
       const kb = CARDS_BY_ID[b.unit.defId].keywords;
-      const aTank = ka.includes("Tank") ? 0 : ka.includes("Backline") ? 2 : 1;
-      const bTank = kb.includes("Tank") ? 0 : kb.includes("Backline") ? 2 : 1;
-      return aTank - bTank;
+      const aOrder = ka.includes("Tank") ? 0 : ka.includes("Backline") ? 2 : 1;
+      const bOrder = kb.includes("Tank") ? 0 : kb.includes("Backline") ? 2 : 1;
+      return aOrder - bOrder;
     });
     for (const t of sortedTargets) {
       if (remaining <= 0) break;
@@ -856,17 +925,15 @@ function runCombatAt(state: GameState, bf: BattlefieldInstance) {
     }
   }
 
-  assignDamage(totalAtk, defenders, "attacker");
-  assignDamage(totalDef, attackers, "defender");
+  assignDamage(totalAtk, defenders);
+  assignDamage(totalDef, attackers);
 
-  // Kill units with damage >= might
   killDead(state);
 
-  // Determine result
+  // Combat cleanup — heal survivors, determine control
   const remainingUnits = unitsAtBattlefield(state, bf.uid);
-  const remPlayers = new Set(remainingUnits.map((u) => u.player.id));
-  // Heal all surviving units (per Combat Cleanup rule)
   for (const u of remainingUnits) u.unit.damage = 0;
+  const remPlayers = new Set(remainingUnits.map((u) => u.player.id));
 
   if (remPlayers.size === 1) {
     const winner = [...remPlayers][0];
@@ -876,21 +943,16 @@ function runCombatAt(state: GameState, bf: BattlefieldInstance) {
       log(state, `${getPlayer(state, winner).name} maintains control.`);
       bf.contested = false;
     }
-    // Recall attackers if defenders still present? In our simplified model:
-    // if attacker's units survive AND defenders also survive → both stay (re-stage combat).
   } else if (remPlayers.size === 0) {
-    // No survivors → battlefield uncontrolled
     bf.controllerId = null;
     bf.contested = false;
-    log(state, `Battlefield is left uncontrolled.`);
+    log(state, `Battlefield left uncontrolled.`);
   } else {
-    // Both sides still have units — re-stage (simplified: do nothing this iteration)
     bf.contested = true;
   }
 }
 
 function killDead(state: GameState) {
-  // First, collect dying units so we can fire onDie BEFORE they're moved to trash
   const dying: { unit: CardInstance; player: PlayerState }[] = [];
   for (const p of state.players) {
     for (const u of p.base.units) {
@@ -900,7 +962,6 @@ function killDead(state: GameState) {
       }
     }
   }
-  // Fire onDie triggers (Deathknell happens before moving to trash per rules)
   for (const { unit, player } of dying) {
     emitTrigger(state, "onDie", {
       unitUid: unit.uid,
@@ -908,7 +969,6 @@ function killDead(state: GameState) {
       battlefieldId: unit.battlefieldId,
     });
   }
-  // Now actually move them to trash
   for (const p of state.players) {
     const survivors: CardInstance[] = [];
     for (const u of p.base.units) {
@@ -957,7 +1017,6 @@ function addPoints(
   via?: "Conquer" | "Hold",
 ) {
   const p = getPlayer(state, playerId);
-  // Winning point rule (simplified): if at VS-1 and gaining via Conquer, only counts if you scored ALL battlefields this turn.
   if (
     !isBurnOut &&
     via === "Conquer" &&
@@ -979,7 +1038,6 @@ function addPoints(
   if (via) {
     log(state, `${p.name} scores via ${via} (${p.points}/${state.victoryScore}).`);
   }
-  // Check win
   const max = Math.max(...state.players.map((pp) => pp.points));
   if (p.points >= state.victoryScore && p.points === max) {
     const others = state.players.filter((pp) => pp.id !== p.id);
@@ -992,42 +1050,39 @@ function addPoints(
 
 // ---------------- auto-pay (UX convenience) ----------------
 
-/**
- * Smart attempt to play a card from hand or champion zone.
- *
- * Step 1: validate the card exists and the player can theoretically afford it.
- * Step 2: auto-tap enough ready runes to cover the Energy cost (preferring
- *   runes whose domain DOESN'T match the card's, so matching runes stay
- *   available to be recycled for Power).
- * Step 3: if Power is still short, set state.pendingPlay so the UI can prompt
- *   the user to pick which runes to recycle.
- * Step 4: if Power is fully covered, play the card immediately.
- */
 export function attemptPlayCard(state: GameState, uid: string): GameState {
   if (state.winnerId) return state;
-  if (state.phase !== "main") return state;
+  if (state.mulliganState) return state;
   if (state.pendingPlay) return state;
 
   const card = findCard(state, uid);
   if (!card) return state;
   if (card.zone !== "hand" && card.zone !== "champion_zone") return state;
-  if (card.ownerId !== state.turnPlayerId) return state;
+
+  // Determine who is the allowed player
+  const allowedId = isInCombatShowdown(state)
+    ? state.combat!.showdownFocusId
+    : state.turnPlayerId;
+  if (card.ownerId !== allowedId) return state;
 
   const def = CARDS_BY_ID[card.defId];
-  const player = getPlayer(state, card.ownerId);
 
+  // During showdown, only Action/Reaction cards
+  if (isInCombatShowdown(state)) {
+    if (!def.keywords.includes("Action") && !def.keywords.includes("Reaction")) {
+      return state;
+    }
+  }
+
+  const player = getPlayer(state, card.ownerId);
   const energyNeed = Math.max(0, (def.energy ?? 0) - player.pool.energy);
   const totalPower = Object.values(player.pool.power).reduce((a, b) => a + b, 0);
   const powerNeed = Math.max(0, (def.power ?? 0) - totalPower);
 
-  // Already affordable — pay and play instantly.
   if (energyNeed === 0 && powerNeed === 0) {
     return playCard(state, uid);
   }
 
-  // Validate it COULD be paid given total rune resources (max(E,P) ready,
-  // P matching). One rune can contribute BOTH 1 energy (tap) AND 1 power
-  // (recycle the same rune).
   const ready = player.base.runes.filter((r) => !r.exhausted);
   const allMatching = player.base.runes.filter(
     (r) => def.domains.includes(r.domain) || r.domain === "Colorless",
@@ -1041,29 +1096,22 @@ export function attemptPlayCard(state: GameState, uid: string): GameState {
     return state;
   }
 
-  // Set pending — user pays manually. Tap runes (chip click) for energy,
-  // recycle (↻ button) for power. Pending auto-finalizes once both met.
   state.pendingPlay = {
     cardUid: uid,
     energyLeft: energyNeed,
     powerLeft: powerNeed,
     neededDomains: [...def.domains],
   };
-  log(
-    state,
-    `${player.name}: pay ${energyNeed} energy + ${powerNeed} power for ${def.name}.`,
-  );
+  log(state, `${player.name}: pay ${energyNeed} energy + ${powerNeed} power for ${def.name}.`);
   return state;
 }
 
-/** Try to finalize a pending play if all costs are met. */
 function tryFinalizePending(state: GameState) {
   const pp = state.pendingPlay;
   if (!pp) return;
   if (pp.energyLeft > 0 || pp.powerLeft > 0) return;
   const cardUid = pp.cardUid;
   state.pendingPlay = null;
-  // playCard will subtract from pool; pool should now have enough.
   playCard(state, cardUid);
 }
 
@@ -1075,12 +1123,11 @@ export function isValidRecycleForPending(
   if (!pending) return false;
   const r = findRune(state, runeUid);
   if (!r) return false;
-  // Exhausted runes ARE valid for recycle — recycling sends them to the deck
-  // regardless of tap state. This lets a single rune contribute both 1 energy
-  // (from tap) AND 1 power (from recycle), e.g. paying 2E + 1 Mind power
-  // with 2 Mind runes (tap both for energy, recycle one for power).
   if (r.zone !== "base") return false;
-  if (r.ownerId !== state.turnPlayerId) return false;
+  const allowedId = isInCombatShowdown(state)
+    ? state.combat!.showdownFocusId
+    : state.turnPlayerId;
+  if (r.ownerId !== allowedId) return false;
   if (
     !pending.neededDomains.includes(r.domain) &&
     r.domain !== "Colorless"
@@ -1094,7 +1141,6 @@ export function recycleForPending(
   runeUid: string,
 ): GameState {
   if (!isValidRecycleForPending(state, runeUid)) return state;
-  // recycleRuneForPower already does the rune→deck and pool credit
   state = recycleRuneForPower(state, runeUid);
   if (!state.pendingPlay) return state;
   state.pendingPlay.powerLeft -= 1;
@@ -1107,8 +1153,6 @@ export function recycleForPending(
 }
 
 export function cancelPendingPlay(state: GameState): GameState {
-  // Note: tapping rune for energy already happened and isn't reversed.
-  // The user can manually untap each refundable rune afterwards.
   if (state.pendingPlay) {
     log(state, `Play cancelled.`);
     state.pendingPlay = null;
@@ -1120,6 +1164,7 @@ export function activateLegend(state: GameState, playerId: string): GameState {
   if (state.winnerId) return state;
   if (state.phase !== "main") return state;
   if (playerId !== state.turnPlayerId) return state;
+  if (isInCombatShowdown(state)) return state;
   const p = getPlayer(state, playerId);
   const abilities = getAbilities(p.legendZone.id);
   if (!abilities?.activated?.length) {
@@ -1139,6 +1184,7 @@ export function canActivateLegend(state: GameState, playerId: string): boolean {
   if (state.winnerId) return false;
   if (state.phase !== "main") return false;
   if (playerId !== state.turnPlayerId) return false;
+  if (isInCombatShowdown(state)) return false;
   const p = getPlayer(state, playerId);
   const abilities = getAbilities(p.legendZone.id);
   if (!abilities?.activated?.length) return false;
@@ -1198,7 +1244,6 @@ export function resolveSpellTarget(
     return state;
   }
   ab.spell.resolve(state, p.casterId, targetUid);
-  // Move spell from banishment to trash
   for (const pl of state.players) {
     const idx = pl.banishment.findIndex((c) => c.uid === p.spellUid);
     if (idx >= 0) {
@@ -1209,7 +1254,6 @@ export function resolveSpellTarget(
     }
   }
   state.pendingSpellTarget = null;
-  // Trigger state-based actions
   killDead(state);
   return state;
 }
@@ -1217,7 +1261,6 @@ export function resolveSpellTarget(
 export function cancelSpellTarget(state: GameState): GameState {
   const p = state.pendingSpellTarget;
   if (!p) return state;
-  // Move spell back to hand (refund) — simpler than tracking partial pay
   for (const pl of state.players) {
     const idx = pl.banishment.findIndex((c) => c.uid === p.spellUid);
     if (idx >= 0) {
@@ -1234,15 +1277,12 @@ export function cancelSpellTarget(state: GameState): GameState {
 
 // ----------------------- triggers -----------------------
 
-/** Walk every legend, every battlefield unit, and fire any ability whose
- * trigger kind matches and predicate passes. */
 function emitTrigger(
   state: GameState,
   kind: TriggerKind,
   data?: Record<string, unknown>,
 ): void {
   for (const player of state.players) {
-    // Legend triggers
     const legendAbilities = getAbilities(player.legendZone.id);
     if (legendAbilities?.triggers) {
       for (const t of legendAbilities.triggers) {
@@ -1258,7 +1298,6 @@ function emitTrigger(
         t.resolve(ctx);
       }
     }
-    // Unit triggers (champions, others)
     for (const unit of player.base.units) {
       const ab = getAbilities(unit.defId);
       if (!ab?.triggers) continue;
@@ -1315,11 +1354,3 @@ function processDelayedEffects(state: GameState) {
   }
   state.delayedEffects = remaining;
 }
-
-// ---------------- public surface ----------------
-
-export {
-  shuffle,
-  newCardInstance,
-  newRuneInstance,
-};

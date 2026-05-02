@@ -6,7 +6,7 @@ import { useGameStore } from "@/store/gameStore";
 import { GameBoard } from "@/components/game/GameBoard";
 import { loadDecks, STARTER_DECKS } from "@/lib/decks/storage";
 import { DeckList } from "@/lib/game/types";
-import { runAITurn } from "@/lib/game/ai";
+import { runAIMulligan, runAIShowdown, runAITurn } from "@/lib/game/ai";
 import { CARDS_BY_ID } from "@/lib/cards/database";
 import { Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -27,20 +27,47 @@ export default function PlayPage() {
     setDecks(loadDecks());
   }, []);
 
-  // AI turn driver
+  // ── AI mulligan (auto-pass, keeps all 4 cards) ──────────────────────────
+  useEffect(() => {
+    if (!state?.mulliganState) return;
+    const aiEntry = state.mulliganState.players.find((p) => p.id === "p2");
+    if (!aiEntry || aiEntry.done) return;
+    const t = setTimeout(() => {
+      const next = runAIMulligan(JSON.parse(JSON.stringify(state)));
+      useGameStore.setState({ state: next });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [state?.mulliganState]);
+
+  // ── AI main turn ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!state) return;
     if (state.winnerId) return;
+    if (state.mulliganState) return; // mulligan not done yet
     if (state.turnPlayerId !== "p2") return;
     if (state.phase !== "main") return;
+    if (state.combat?.step === "showdown") return; // handled by showdown effect
     const t = setTimeout(() => {
       const next = runAITurn(JSON.parse(JSON.stringify(state)));
       useGameStore.setState({ state: next });
     }, 800);
     return () => clearTimeout(t);
-  }, [state?.turnPlayerId, state?.phase, state?.turnNumber, state]);
+  }, [state?.turnPlayerId, state?.phase, state?.turnNumber, state?.combat, state]);
 
-  // When game ends, finalize match
+  // ── AI showdown focus (fires even during human's turn) ────────────────────
+  useEffect(() => {
+    if (!state) return;
+    if (state.winnerId) return;
+    if (state.combat?.step !== "showdown") return;
+    if (state.combat.showdownFocusId !== "p2") return;
+    const t = setTimeout(() => {
+      const next = runAIShowdown(JSON.parse(JSON.stringify(state)));
+      useGameStore.setState({ state: next });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [state?.combat?.step, state?.combat?.showdownFocusId, state?.combat?.showdownPassCount]);
+
+  // ── Game-end handler ──────────────────────────────────────────────────────
   useEffect(() => {
     if (state?.winnerId && match?.matchPhase === "playing") {
       const t = setTimeout(() => finalizeGame(), 1500);
@@ -48,7 +75,7 @@ export default function PlayPage() {
     }
   }, [state?.winnerId, match?.matchPhase, finalizeGame]);
 
-  // ----------------------- screens -----------------------
+  // ── Screens ───────────────────────────────────────────────────────────────
 
   // 1. No match: deck picker
   if (!match) {
@@ -84,8 +111,8 @@ export default function PlayPage() {
           ← Back
         </a>
         <p className="max-w-md text-center text-xs opacity-50">
-          Riftbound MVP — 1064 real cards, real rules. Card-specific abilities are
-          partially implemented (vanilla stats + Tank/Backline/Shield/Assault).
+          Riftbound MVP — 1064 real cards, real rules. Card-specific abilities
+          are partially implemented (vanilla stats + Tank/Backline/Shield/Assault).
         </p>
       </main>
     );
@@ -151,7 +178,7 @@ export default function PlayPage() {
     );
   }
 
-  // 5. Playing
+  // 5. Playing — show mulligan overlay if needed, otherwise game board
   return (
     <>
       <button
@@ -163,12 +190,124 @@ export default function PlayPage() {
       <div className="absolute left-1/2 top-2 z-50 -translate-x-1/2 rounded bg-black/60 px-3 py-1 text-xs">
         Game {match.gameNumber} · Match {match.winsP1}-{match.winsP2}
       </div>
-      <GameBoard />
+      {state?.mulliganState && <MulliganOverlay />}
+      {!state?.mulliganState && <GameBoard />}
     </>
   );
 }
 
-// ----------------------- BF picker -----------------------
+// ── Mulligan overlay ──────────────────────────────────────────────────────────
+
+function MulliganOverlay() {
+  const state = useGameStore((s) => s.state);
+  const doMulligan = useGameStore((s) => s.finalizeMulligan);
+  const [setAside, setSetAside] = useState<string[]>([]);
+
+  if (!state?.mulliganState) return null;
+
+  const humanEntry = state.mulliganState.players.find((p) => p.id === "p1");
+  if (!humanEntry || humanEntry.done) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(ellipse_at_center,_#1a0b2e_0%,_#050210_70%)] text-white">
+        <p className="text-lg opacity-60">Waiting for AI mulligan…</p>
+      </div>
+    );
+  }
+
+  const human = state.players.find((p) => p.id === "p1")!;
+
+  function toggleCard(uid: string) {
+    setSetAside((cur) => {
+      if (cur.includes(uid)) return cur.filter((x) => x !== uid);
+      if (cur.length >= 2) return cur; // max 2
+      return [...cur, uid];
+    });
+  }
+
+  function confirm() {
+    doMulligan("p1", setAside);
+  }
+
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-[radial-gradient(ellipse_at_center,_#1a0b2e_0%,_#050210_70%)] px-4 text-white">
+      <h1 className="text-3xl font-black">Mulligan</h1>
+      <p className="max-w-md text-center text-sm opacity-70">
+        You may set aside up to <strong>2 cards</strong>. You will draw that
+        many replacements, then the set-aside cards go to the bottom of your
+        deck.
+      </p>
+
+      <div className="flex flex-wrap justify-center gap-3">
+        {human.hand.map((card) => {
+          const def = CARDS_BY_ID[card.defId];
+          if (!def) return null;
+          const selected = setAside.includes(card.uid);
+          return (
+            <motion.button
+              key={card.uid}
+              onClick={() => toggleCard(card.uid)}
+              whileHover={{ y: -6, scale: 1.03 }}
+              animate={{
+                boxShadow: selected
+                  ? "0 0 28px 6px rgba(239,68,68,0.7)"
+                  : "0 0 0 0 transparent",
+              }}
+              className={cn(
+                "relative h-44 w-32 overflow-hidden rounded-xl border-2 text-left transition-colors",
+                selected
+                  ? "border-red-400 bg-red-900/40"
+                  : "border-fuchsia-900/60 bg-black/40",
+              )}
+            >
+              {def.imageUrl && (
+                <Image
+                  src={def.imageUrl}
+                  alt={def.name}
+                  fill
+                  unoptimized
+                  className="object-cover opacity-70"
+                />
+              )}
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 to-transparent p-1.5">
+                <div className="text-[11px] font-bold leading-tight">{def.name}</div>
+                <div className="text-[9px] opacity-60">
+                  {def.type} · {def.energy ?? 0}E
+                  {def.power ? ` + ${def.power}P` : ""}
+                </div>
+              </div>
+              {selected && (
+                <div className="absolute right-1 top-1 rounded bg-red-500 px-1.5 py-0.5 text-[9px] font-bold">
+                  REPLACE
+                </div>
+              )}
+            </motion.button>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-col items-center gap-2">
+        <button
+          onClick={confirm}
+          className="rounded bg-fuchsia-700 px-8 py-3 text-lg font-bold hover:bg-fuchsia-600"
+        >
+          {setAside.length === 0
+            ? "Keep all cards"
+            : `Replace ${setAside.length} card${setAside.length > 1 ? "s" : ""}`}
+        </button>
+        {setAside.length > 0 && (
+          <button
+            onClick={() => setSetAside([])}
+            className="text-xs opacity-50 hover:opacity-80 underline"
+          >
+            Clear selection
+          </button>
+        )}
+      </div>
+    </main>
+  );
+}
+
+// ── Battlefield picker ────────────────────────────────────────────────────────
 
 function BattlefieldPicker({
   match,
@@ -194,14 +333,12 @@ function BattlefieldPicker({
 
   const [pick, setPick] = useState<string | null>(null);
 
-  // Auto-pick if only one option (last game of BO3)
   useEffect(() => {
     if (availableP1.length === 1 && pick === null) setPick(availableP1[0]);
   }, [availableP1, pick]);
 
   function confirm() {
     if (!pick) return;
-    // AI picks randomly
     const aiPick = availableP2[Math.floor(Math.random() * availableP2.length)];
     onPicked(pick, aiPick);
   }
@@ -214,9 +351,8 @@ function BattlefieldPicker({
         </div>
         <h1 className="text-3xl font-black">Choose a Battlefield</h1>
         <p className="mt-2 max-w-xl text-sm opacity-70">
-          Each player picks one of their unused battlefields. The two picks become
-          the battlefields in play. Used battlefields are removed from the pool for
-          subsequent games.
+          Each player picks one of their unused battlefields. The two picks
+          become the battlefields in play for this game.
         </p>
       </div>
 
@@ -225,15 +361,12 @@ function BattlefieldPicker({
           const def = CARDS_BY_ID[bfId];
           if (!def) return null;
           const selected = pick === bfId;
-          // Battlefields are landscape — render at 16:10 aspect
           return (
             <motion.button
               key={bfId}
               onClick={() => setPick(bfId)}
               whileHover={{ y: -6, scale: 1.03 }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-              }}
+              onContextMenu={(e) => e.preventDefault()}
               animate={{
                 boxShadow: selected
                   ? "0 0 32px 6px rgba(250, 204, 21, 0.6)"

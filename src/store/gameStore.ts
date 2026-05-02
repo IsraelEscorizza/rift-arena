@@ -7,7 +7,9 @@ import {
   cancelPendingPlay,
   cancelSpellTarget,
   createGame,
+  finalizeMulligan,
   nextPhase,
+  passShowdown,
   playCard,
   recycleForPending,
   recycleRuneForPower,
@@ -66,6 +68,10 @@ interface GameStore {
   recycleRune: (uid: string) => void;
   standardMove: (unitUid: string, destBfUid: string | null) => void;
   standardMoveMultiple: (unitUids: string[], destBfUid: string | null) => void;
+  /** Pass focus during a Combat Showdown. When both players pass, damage resolves. */
+  passShowdown: (playerId: string) => void;
+  /** Complete this player's mulligan. setAside is up to 2 card uids to replace. */
+  finalizeMulligan: (playerId: string, setAside: string[]) => void;
   reset: () => void;
 }
 
@@ -203,6 +209,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const cur = get().state;
     if (!cur) return;
     set({ state: standardMoveMultiple(clone(cur), unitUids, destBfUid) });
+  },
+  passShowdown: (playerId) => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: passShowdown(clone(cur), playerId) });
+  },
+  finalizeMulligan: (playerId, setAside) => {
+    const cur = get().state;
+    if (!cur) return;
+    set({ state: finalizeMulligan(clone(cur), playerId, setAside) });
   },
   reset: () => set({ state: null, match: null }),
 }));

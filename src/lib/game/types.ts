@@ -162,6 +162,14 @@ export interface PendingPlay {
   neededDomains: Domain[]; // domains that satisfy this card's power
 }
 
+export interface MulliganState {
+  players: {
+    id: string;
+    setAside: string[]; // card uids set aside
+    done: boolean;
+  }[];
+}
+
 export interface GameState {
   mode: GameMode;
   victoryScore: number;
@@ -172,23 +180,24 @@ export interface GameState {
   priorityPlayerId: string;
   turnNumber: number;
   phase: Phase;
-  // Combat
+  // Combat showdown — non-null while a combat showdown is in progress
   combat: {
     battlefieldUid: string;
     attackerId: string;
     defenderId: string;
+    /** "showdown" = action window; "damage" = resolving damage (internal); "resolution" = cleanup */
     step: "showdown" | "damage" | "resolution";
+    showdownFocusId: string;   // player who currently has focus in the showdown
+    showdownPassCount: number; // consecutive passes; when >= 2, advance to damage
   } | null;
   log: string[];
   winnerId: string | null;
   pendingMove: { unitUid: string } | null;
-  // When user clicks a card whose Power cost requires recycling runes,
-  // we hold this state until they pick which runes to recycle.
   pendingPlay: PendingPlay | null;
-  // After a spell with target is "played" but before it resolves, we hold this.
   pendingSpellTarget: PendingSpellTarget | null;
-  // Effects that will fire at a future scheduled time (e.g. start of next main).
   delayedEffects: DelayedEffect[];
+  /** Set at game start; null once all players have completed their mulligan. */
+  mulliganState: MulliganState | null;
 }
 
 export interface PendingSpellTarget {

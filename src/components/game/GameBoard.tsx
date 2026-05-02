@@ -13,6 +13,7 @@ import {
 import { CARDS_BY_ID, getDomainHex } from "@/lib/cards/database";
 import {
   canActivateLegend,
+  canPassShowdown,
   canPlayCard,
   canStandardMove,
   canUntapRune,
@@ -59,6 +60,7 @@ export function GameBoard() {
   const untapRune = useGameStore((s) => s.untapRune);
   const recycleRune = useGameStore((s) => s.recycleRune);
   const moveMany = useGameStore((s) => s.standardMoveMultiple);
+  const doPassShowdown = useGameStore((s) => s.passShowdown);
 
   const [selected, setSelected] = useState<string[]>([]);
 
@@ -130,7 +132,12 @@ export function GameBoard() {
         </div>
         <button
           onClick={() => next()}
-          disabled={!activeIsHuman || state.phase !== "main" || !!state.winnerId}
+          disabled={
+            !activeIsHuman ||
+            state.phase !== "main" ||
+            !!state.winnerId ||
+            !!state.combat
+          }
           className="flex items-center gap-1 rounded bg-emerald-700 px-3 py-1 text-xs font-bold hover:bg-emerald-600 disabled:opacity-40"
         >
           End Turn <ArrowRight className="h-3 w-3" />
@@ -428,6 +435,18 @@ export function GameBoard() {
         </div>
       )}
 
+      {/* Combat Showdown banner */}
+      <AnimatePresence>
+        {state.combat?.step === "showdown" && (
+          <ShowdownBanner
+            state={state}
+            humanId={human.id}
+            onPass={() => doPassShowdown(human.id)}
+            onPlayAction={(uid) => tryPlayHandCard(uid)}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Winner overlay */}
       <AnimatePresence>
         {state.winnerId && (
@@ -448,6 +467,112 @@ export function GameBoard() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+// ============================================================================
+// ShowdownBanner — overlays during Combat Showdown window
+// ============================================================================
+
+function ShowdownBanner({
+  state,
+  humanId,
+  onPass,
+  onPlayAction,
+}: {
+  state: GameState;
+  humanId: string;
+  onPass: () => void;
+  onPlayAction: (uid: string) => void;
+}) {
+  const combat = state.combat!;
+  const bfDef = state.battlefieldDefs[
+    state.battlefields.find((b) => b.uid === combat.battlefieldUid)!.defId
+  ];
+  const isHumanFocus = combat.showdownFocusId === humanId;
+  const focusPlayer = state.players.find((p) => p.id === combat.showdownFocusId);
+  const human = state.players.find((p) => p.id === humanId)!;
+  const isHumanCanPass = canPassShowdown(state, humanId);
+
+  // Playable Action/Reaction cards in hand during showdown
+  const actionCards = isHumanFocus
+    ? human.hand.filter((c) => {
+        const def = CARDS_BY_ID[c.defId];
+        return (
+          (def.keywords.includes("Action") || def.keywords.includes("Reaction")) &&
+          (canPlayCard(state, c.uid) || canPotentiallyAfford(state, c.uid))
+        );
+      })
+    : [];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 20 }}
+      className="absolute inset-x-0 bottom-32 z-40 flex justify-center"
+    >
+      <div className="rounded-2xl border-2 border-red-400/70 bg-black/90 px-6 py-4 shadow-2xl shadow-red-900/50 ring-1 ring-red-500/30 max-w-lg w-full mx-4">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-red-400 text-lg">⚔️</span>
+          <span className="font-black text-red-300 text-base">
+            Combat Showdown — {bfDef?.name ?? "Battlefield"}
+          </span>
+        </div>
+
+        <div className="text-xs text-white/70 mb-3">
+          {isHumanFocus
+            ? "Your turn to act. Play an Action card or pass."
+            : `${focusPlayer?.name ?? "Opponent"} has focus — waiting…`}
+        </div>
+
+        {/* Action cards the player can play */}
+        {isHumanFocus && actionCards.length > 0 && (
+          <div className="mb-3">
+            <div className="text-[10px] uppercase text-white/40 mb-1">
+              Playable Action cards
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {actionCards.map((c) => {
+                const def = CARDS_BY_ID[c.defId];
+                return (
+                  <button
+                    key={c.uid}
+                    onClick={() => onPlayAction(c.uid)}
+                    className="shrink-0 rounded-lg border border-cyan-500/60 bg-cyan-900/50 px-3 py-1.5 text-left hover:bg-cyan-700/60 transition-colors"
+                  >
+                    <div className="text-xs font-bold text-cyan-200">{def.name}</div>
+                    <div className="text-[10px] text-white/50">
+                      {def.energy ?? 0}E{def.power ? ` + ${def.power}P` : ""}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {isHumanFocus && actionCards.length === 0 && (
+          <div className="text-[11px] text-white/40 mb-3 italic">
+            No Action cards in hand.
+          </div>
+        )}
+
+        <div className="flex items-center justify-between">
+          <div className="text-[10px] text-white/30">
+            {combat.showdownPassCount}/2 passes
+          </div>
+          {isHumanCanPass && (
+            <button
+              onClick={onPass}
+              className="rounded-lg bg-red-800 px-4 py-1.5 text-sm font-bold text-white hover:bg-red-700 active:scale-95 transition"
+            >
+              Pass Showdown
+            </button>
+          )}
+        </div>
+      </div>
+    </motion.div>
   );
 }
 
